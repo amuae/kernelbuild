@@ -276,23 +276,21 @@ jobs:
       - name: 修改内核版本信息
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          # 从 Google 源码动态获取 KMI Generation
-          # 优先从 build.config.constants 获取，否则从 build.config.common 获取
-          BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+          # 从本地配置文件获取 KMI Generation (优先)
+          KMI_GEN=$(grep -oP 'KMI_GENERATION=\K[0-9]+' common/build.config.constants 2>/dev/null || \
+                    grep -oP 'KMI_GENERATION=\K[0-9]+' common/build.config.common 2>/dev/null || \
+                    echo "")
           
-          KMI_GEN=$(curl -sL "https://android.googlesource.com/kernel/common/+/refs/heads/${BRANCH}/build.config.constants?format=TEXT" 2>/dev/null | \
-            base64 -d 2>/dev/null | grep -oP 'KMI_GENERATION=\K[0-9]+' || true)
-          
+          # 如果本地获取失败，从 Google 源码远程获取
           if [ -z "$KMI_GEN" ]; then
-            KMI_GEN=$(curl -sL "https://android.googlesource.com/kernel/common/+/refs/heads/${BRANCH}/build.config.common?format=TEXT" 2>/dev/null | \
+            BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+            KMI_GEN=$(curl -sL "https://android.googlesource.com/kernel/common/+/refs/heads/${BRANCH}/build.config.constants?format=TEXT" 2>/dev/null | \
               base64 -d 2>/dev/null | grep -oP 'KMI_GENERATION=\K[0-9]+' || true)
-          fi
-          
-          # 如果仍然获取失败，使用本地配置文件
-          if [ -z "$KMI_GEN" ]; then
-            KMI_GEN=$(grep -oP 'KMI_GENERATION=\K[0-9]+' common/build.config.constants 2>/dev/null || \
-                      grep -oP 'KMI_GENERATION=\K[0-9]+' common/build.config.common 2>/dev/null || \
-                      echo "0")
+            
+            if [ -z "$KMI_GEN" ]; then
+              KMI_GEN=$(curl -sL "https://android.googlesource.com/kernel/common/+/refs/heads/${BRANCH}/build.config.common?format=TEXT" 2>/dev/null | \
+                base64 -d 2>/dev/null | grep -oP 'KMI_GENERATION=\K[0-9]+' || echo "0")
+            fi
           fi
           
           echo "KMI_GEN=$KMI_GEN" >> $GITHUB_ENV
