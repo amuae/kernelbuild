@@ -103,18 +103,7 @@ jobs:
           time echo "scale=5000; 4*a(1)" | bc -l > /dev/null
           
           echo ""
-          echo ">>> 多线程编译测试 (编译 Linux 内核 defconfig)"
-          sudo apt-get install -y -qq build-essential bc flex bison libssl-dev libelf-dev > /dev/null 2>&1
-          
-          cd /tmp
-          curl -sL https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.tar.xz | tar xJ
-          cd linux-6.1
-          
-          echo "开始编译测试..."
-          time (make defconfig > /dev/null 2>&1 && make -j$(nproc) vmlinux > /dev/null 2>&1)
-          
-          echo ""
-          echo "编译测试完成!"
+          echo "CPU 简单测试完成，跳过编译测试，直接进入 Geekbench 5"
 
       - name: 下载 Geekbench 5
         if: inputs.run_geekbench == true
