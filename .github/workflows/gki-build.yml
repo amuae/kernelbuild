@@ -319,20 +319,31 @@ jobs:
               GIT_HASH=$(git rev-parse --short=8 HEAD)
               KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 0) + 37185)
               
-              # 获取 API 版本
+              # 获取 API 版本 (从 Kbuild 获取，兼容新版 SukiSU-Ultra)
               for i in {1..3}; do
-                KSU_API=$(curl -s "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/susfs-main/kernel/Makefile" | \
-                  grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]')
+                KSU_API=$(curl -s "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/susfs-main/kernel/Kbuild" | \
+                  grep -m1 "KSU_VERSION_API :=" | awk -F':= ' '{print $2}' | tr -d '[:space:]')
                 [ -n "$KSU_API" ] && break || sleep 1
               done
-              [ -z "$KSU_API" ] && KSU_API="3.1.7"
+              [ -z "$KSU_API" ] && KSU_API="4.0.0"
               
-              # 写入版本信息
-              echo "" >> kernel/Makefile
-              echo "# KSU Version Info" >> kernel/Makefile
-              echo "KSU_VERSION_API := $KSU_API" >> kernel/Makefile
-              echo "KSU_VERSION_FULL := v$KSU_API-$GIT_HASH@amuae" >> kernel/Makefile
-              echo "ccflags-y += -DKSU_VERSION=$KSU_VERSION" >> kernel/Makefile
+              # 修改 Kbuild 中的版本信息 (适配新版 SukiSU-Ultra 结构)
+              # 删除原有的动态版本获取逻辑，使用固定版本
+              sed -i '/^KSU_VERSION_API :=/d' kernel/Kbuild
+              sed -i '/^KSU_VERSION_FULL :=/d' kernel/Kbuild
+              sed -i '/^KSU_GITHUB_VERSION/d' kernel/Kbuild
+              sed -i '/define get_ksu_version_full/,/endef/d' kernel/Kbuild
+              
+              # 在 REPO_OWNER 行后插入我们的版本定义
+              sed -i "/^REPO_OWNER :=/a\\
+KSU_VERSION_API := $KSU_API\\
+KSU_VERSION_FULL := v$KSU_API-$GIT_HASH@amuae" kernel/Kbuild
+              
+              # 确保 ccflags 包含版本号
+              if ! grep -q "DKSU_VERSION=" kernel/Kbuild; then
+                echo "ccflags-y += -DKSU_VERSION=$KSU_VERSION" >> kernel/Kbuild
+              fi
+              
               echo "SukiSU 版本: v$KSU_API-$GIT_HASH ($KSU_VERSION)"
               ;;
               
