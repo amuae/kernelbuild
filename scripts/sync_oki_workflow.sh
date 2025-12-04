@@ -33,8 +33,7 @@ echo -e "${BLUE}========================================${NC}"
 # 切换到项目根目录
 cd "$PROJECT_ROOT"
 
-echo -e "${YELLOW}[1/6] 从 cctv18 仓库下载最新工作流...${NC}"
-# 直接使用 curl 下载
+echo -e "${YELLOW}[1/5] 从 cctv18 仓库下载最新工作流...${NC}"
 if ! curl -fsSL "$SOURCE_URL" -o "$TARGET_WORKFLOW"; then
     echo -e "${RED}错误: 无法下载源工作流文件${NC}"
     echo -e "${RED}URL: $SOURCE_URL${NC}"
@@ -42,53 +41,30 @@ if ! curl -fsSL "$SOURCE_URL" -o "$TARGET_WORKFLOW"; then
 fi
 echo -e "${GREEN}下载成功!${NC}"
 
-echo -e "${YELLOW}[2/6] 修改工作流名称...${NC}"
-# 修改工作流名称
+echo -e "${YELLOW}[2/5] 修改工作流名称...${NC}"
 sed -i "s/^name:.*$/name: $WORKFLOW_NAME/" "$TARGET_WORKFLOW"
 
-echo -e "${YELLOW}[3/6] 修改默认内核后缀...${NC}"
-# 修改 KERNEL_NAME
+echo -e "${YELLOW}[3/5] 修改默认内核后缀...${NC}"
 sed -i "s/KERNEL_NAME: '.*'/KERNEL_NAME: '$KERNEL_NAME'/" "$TARGET_WORKFLOW"
 
-echo -e "${YELLOW}[4/6] 修改伪装构建时间...${NC}"
-# 修改 FAKESTAT 和 FAKETIME
+echo -e "${YELLOW}[4/5] 修改伪装构建时间...${NC}"
 sed -i "s/export FAKESTAT=\"[^\"]*\"/export FAKESTAT=\"$FAKE_DATE\"/" "$TARGET_WORKFLOW"
 sed -i "s/export FAKETIME=\"@[^\"]*\"/export FAKETIME=\"@$FAKE_DATE\"/" "$TARGET_WORKFLOW"
 
-echo -e "${YELLOW}[5/6] 移除自动创建 Release 并添加 Telegram 通知...${NC}"
+echo -e "${YELLOW}[5/5] 移除自动创建 Release 并添加 Telegram 通知...${NC}"
 
-# 使用 Python 进行复杂的文本处理（移除 release step 并添加 Telegram 通知）
-python3 << 'PYTHON_SCRIPT'
+# 创建 Python 修改脚本
+cat > /tmp/modify_oki_workflow.py << 'PYTHON_EOF'
 import re
 import sys
 
-target_file = sys.argv[1] if len(sys.argv) > 1 else ".github/workflows/oki-6.1.118-fastbuild.yml"
+target_file = sys.argv[1]
 
 with open(target_file, 'r', encoding='utf-8') as f:
     content = f.read()
 
-# 移除 "创建发布" 步骤 (从 "- name: 创建发布" 到下一个 "- name:" 或 "# ==" 之前)
-# 使用正则表达式匹配
-pattern = r'''      - name: 创建发布
-        id: create_release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: .*?
-          name: .*?
-          body: \|.*?draft: false
-          prerelease: false
-          files: \|
-            release_zips/AnyKernel3_\*\.zip
-
-'''
-
-# 替换为空（移除该步骤）
-content = re.sub(pattern, '', content, flags=re.DOTALL)
-
-# 检查是否已有 Telegram 通知
-if '发送 Telegram 通知' not in content:
-    # 在文件末尾添加 Telegram 通知步骤
-    telegram_step = '''
+# Telegram 通知步骤
+telegram_step = '''
       # ==================== Telegram 通知 ====================
       - name: 发送 Telegram 通知
         if: success()
@@ -139,39 +115,104 @@ if '发送 Telegram 通知' not in content:
               -F caption="${BUILD_INFO}" \\
               -F parse_mode="Markdown"
           else
-            # 如果没有找到文件，只发送消息
             curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \\
               -d chat_id="${TELEGRAM_CHAT_ID}" \\
               -d text="${BUILD_INFO}" \\
               -d parse_mode="Markdown"
           fi
 '''
-    # 找到 release job 的最后一个步骤后添加
-    if 'echo "KSU_TYPENAME=$KSU_TYPENAME"' in content:
-        content = content.replace(
-            'echo "KSU_TYPENAME=$KSU_TYPENAME" >> $GITHUB_ENV\n         \n      - name: 创建发布',
-            'echo "KSU_TYPENAME=$KSU_TYPENAME" >> $GITHUB_ENV' + telegram_step
-        )
+
+# 查找 "创建发布" 步骤的开始和结束位置
+release_start = content.find('      - name: 创建发布')
+if release_start != -1:
+    # 找到 release_zips/AnyKernel3_*.zip 后的换行
+    release_end = content.find('release_zips/AnyKernel3_*.zip', release_start)
+    if release_end != -1:
+        # 找到这行之后的换行符
+        release_end = content.find('\n', release_end)
+        if release_end != -1:
+            release_end += 1  # 包含换行符
+            # 删除整个 "创建发布" 步骤
+            content = content[:release_start] + content[release_end:]
+            print("已移除 '创建发布' 步骤")
+
+# 检查是否已有 Telegram 通知
+if '发送 Telegram 通知' not in content:
+    # 在 KSU_TYPENAME 设置后添加 Telegram 步骤
+    insert_marker = 'echo "KSU_TYPENAME=$KSU_TYPENAME" >> $GITHUB_ENV'
+    insert_pos = content.find(insert_marker)
+    if insert_pos != -1:
+        # 找到这行结束的位置
+        line_end = content.find('\n', insert_pos)
+        if line_end != -1:
+            content = content[:line_end+1] + telegram_step + content[line_end+1:]
+            print("已添加 Telegram 通知步骤")
+    else:
+        print("警告: 未找到插入点，Telegram 通知未添加")
+else:
+    print("Telegram 通知已存在，跳过添加")
 
 with open(target_file, 'w', encoding='utf-8') as f:
     f.write(content)
 
 print("工作流文件已更新")
-PYTHON_SCRIPT
+PYTHON_EOF
 
-echo -e "${YELLOW}[6/6] 验证修改...${NC}"
-# 验证关键修改
-if grep -q "$WORKFLOW_NAME" "$TARGET_WORKFLOW" && \
-   grep -q "$KERNEL_NAME" "$TARGET_WORKFLOW" && \
-   grep -q "$FAKE_DATE" "$TARGET_WORKFLOW"; then
-    echo -e "${GREEN}验证通过!${NC}"
+python3 /tmp/modify_oki_workflow.py "$TARGET_WORKFLOW"
+rm -f /tmp/modify_oki_workflow.py
+
+# 验证修改
+echo ""
+echo -e "${YELLOW}验证修改...${NC}"
+
+ERRORS=0
+
+if grep -q "$WORKFLOW_NAME" "$TARGET_WORKFLOW"; then
+    echo -e "  ${GREEN}✓${NC} 工作流名称已修改"
 else
-    echo -e "${RED}警告: 部分修改可能未成功应用${NC}"
+    echo -e "  ${RED}✗${NC} 工作流名称修改失败"
+    ERRORS=$((ERRORS+1))
 fi
 
-echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}   同步完成！${NC}"
-echo -e "${GREEN}========================================${NC}"
+if grep -q "$KERNEL_NAME" "$TARGET_WORKFLOW"; then
+    echo -e "  ${GREEN}✓${NC} 内核后缀已修改"
+else
+    echo -e "  ${RED}✗${NC} 内核后缀修改失败"
+    ERRORS=$((ERRORS+1))
+fi
+
+if grep -q "$FAKE_DATE" "$TARGET_WORKFLOW"; then
+    echo -e "  ${GREEN}✓${NC} 伪装时间已修改"
+else
+    echo -e "  ${RED}✗${NC} 伪装时间修改失败"
+    ERRORS=$((ERRORS+1))
+fi
+
+if ! grep -q "创建发布" "$TARGET_WORKFLOW"; then
+    echo -e "  ${GREEN}✓${NC} 已移除自动创建 Release"
+else
+    echo -e "  ${RED}✗${NC} 移除自动创建 Release 失败"
+    ERRORS=$((ERRORS+1))
+fi
+
+if grep -q "发送 Telegram 通知" "$TARGET_WORKFLOW"; then
+    echo -e "  ${GREEN}✓${NC} 已添加 Telegram 通知"
+else
+    echo -e "  ${RED}✗${NC} 添加 Telegram 通知失败"
+    ERRORS=$((ERRORS+1))
+fi
+
+echo ""
+if [ $ERRORS -eq 0 ]; then
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}   同步完成！所有修改验证通过${NC}"
+    echo -e "${GREEN}========================================${NC}"
+else
+    echo -e "${YELLOW}========================================${NC}"
+    echo -e "${YELLOW}   同步完成，但有 $ERRORS 项验证失败${NC}"
+    echo -e "${YELLOW}========================================${NC}"
+fi
+
 echo ""
 echo -e "已应用的修改:"
 echo -e "  ${BLUE}•${NC} 工作流名称: ${GREEN}$WORKFLOW_NAME${NC}"
