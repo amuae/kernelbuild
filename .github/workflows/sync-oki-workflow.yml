@@ -1,0 +1,165 @@
+name: 同步 OKI 工作流
+
+on:
+  schedule:
+    # 每天 UTC 时间 2:00 (北京时间 10:00) 自动检查更新
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      force_update:
+        description: '强制更新（忽略文件差异检查）'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  SOURCE_URL: "https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8650/refs/heads/main/.github/workflows/fastbuild_6.1.118.yml"
+  TARGET_WORKFLOW: ".github/workflows/oki-6.1.118-fastbuild.yml"
+  WORKFLOW_NAME: "构建 OKI 内核 6.1.118"
+  KERNEL_NAME: "android14-11-o-g2b8edc801b38"
+  FAKE_DATE: "2025-08-25 13:49:08"
+  # Telegram 步骤内容（base64 编码，避免 YAML 解析问题）
+  TELEGRAM_STEP_B64: "CiAgICAgICMgPT09PT09PT09PT09PT09PT09PT0gVGVsZWdyYW0g6YCa55+lID09PT09PT09PT09PT09PT09PT09CiAgICAgIC0gbmFtZTog5Y+R6YCBIFRlbGVncmFtIOmAmuefpQogICAgICAgIGlmOiBzdWNjZXNzKCkKICAgICAgICBlbnY6CiAgICAgICAgICBURUxFR1JBTV9CT1RfVE9LRU46ICR7eyBzZWNyZXRzLlRFTEVHUkFNX0JPVF9UT0tFTiB9fQogICAgICAgICAgVEVMRUdSQU1fQ0hBVF9JRDogJHt7IHNlY3JldHMuVEVMRUdSQU1fQ0hBVF9JRCB9fQogICAgICAgIHJ1bjogfAogICAgICAgICAgaWYgWyAteiAiJFRFTEVHUkFNX0JPVF9UT0tFTiIgXSB8fCBbIC16ICIkVEVMRUdSQU1fQ0hBVF9JRCIgXTsgdGhlbgogICAgICAgICAgICBlY2hvICJUZWxlZ3JhbSDphY3nva7mnKrorr7nva7vvIzot7Pov4fpgJrnn6UiCiAgICAgICAgICAgIGV4aXQgMAogICAgICAgICAgZmkKICAgICAgICAgIAogICAgICAgICAgIyBLUE0g54q25oCB5paH5pysCiAgICAgICAgICBpZiBbWyAiJHt7IGdpdGh1Yi5ldmVudC5pbnB1dHMua3BtX2VuYWJsZSB9fSIgPT0gInRydWUiIF1dOyB0aGVuCiAgICAgICAgICAgIEtQTV9TVEFUVVM9IuKchSDlkK/nlKgiCiAgICAgICAgICBlbHNlCiAgICAgICAgICAgIEtQTV9TVEFUVVM9IuKdjCDnpoHnlKgiCiAgICAgICAgICBmaQogICAgICAgICAgCiAgICAgICAgICAjIFNVU0ZTIOeKtuaAgeaWh+acrAogICAgICAgICAgaWYgW1sgIiR7eyBnaXRodWIuZXZlbnQuaW5wdXRzLnN1c2ZzX2VuYWJsZSB9fSIgPT0gInRydWUiIF1dOyB0aGVuCiAgICAgICAgICAgIFNVU0ZTX1NUQVRVUz0i4pyFIOWQr+eUqCIKICAgICAgICAgIGVsc2UKICAgICAgICAgICAgU1VTRlNfU1RBVFVTPSLinYwg56aB55SoIgogICAgICAgICAgZmkKICAgICAgICAgIAogICAgICAgICAgIyDmnoTlu7rkv6Hmga8KICAgICAgICAgIEJVSUxEX0lORk89JChjYXQgPDwgTVNHRU9GCiAgICAgICAgICDwn4y9ICpPS0kg5YaF5qC45p6E5bu65oiQ5YqfKgogICAgICAgICAgCiAgICAgICAgICDwn5OxICrmnLrlnosqOiDmrKfliqDnnJ/pqoHpvpk4R2VuM+mAmueUqAogICAgICAgICAg8J+UoiAq5YaF5qC45ZCNKjogJHt7IGVudi5LRVJORUxfVkVSU0lPTiB9fS4xMTgtJHt7IGVudi5LRVJORUxfTkFNRSB9fQogICAgICAgICAg8J+VkCAq5YaF5qC45pe26Ze0KjogJHt7IGVudi5GQUtFVElNRSB9fQogICAgICAgICAg8J+UpyAqS2VybmVsU1UqOiAke3sgZW52LktTVV9UWVBFTkFNRSB9fSAodiR7eyBuZWVkcy5idWlsZC5vdXRwdXRzLmtzdXZlciB9fSkKICAgICAgICAgIPCflJIgKlNVU0ZTKjogJHtTVVNGU19TVEFUVVN9CiAgICAgICAgICDimqEgKktQTSo6ICR7S1BNX1NUQVRVU30KICAgICAgICAgIAogICAgICAgICAg8J+UlyBb5p+l55yLIEFjdGlvbnNdKGh0dHBzOi8vZ2l0aHViLmNvbS8ke3sgZ2l0aHViLnJlcG9zaXRvcnkgfX0vYWN0aW9ucy9ydW5zLyR7eyBnaXRodWIucnVuX2lkIH19KQogICAgICAgICAgTVNHRU9GCiAgICAgICAgICApCgogICAgICAgICAgIyDmn6Xmib7lubblj5HpgIEgQW55S2VybmVsMyDljIUKICAgICAgICAgIFpJUF9GSUxFPSQobHMgcmVsZWFzZV96aXBzL0FueUtlcm5lbDNfKi56aXAgMj4vZGV2L251bGwgfCBoZWFkIC0xKQogICAgICAgICAgaWYgWyAtbiAiJFpJUF9GSUxFIiBdOyB0aGVuCiAgICAgICAgICAgIGN1cmwgLXMgLVggUE9TVCAiaHR0cHM6Ly9hcGkudGVsZWdyYW0ub3JnL2JvdCR7VEVMRUdSQU1fQk9UX1RPS0VOfS9zZW5kRG9jdW1lbnQiIFwKICAgICAgICAgICAgICAtRiBjaGF0X2lkPSIke1RFTEVHUkFNX0NIQVRfSUR9IiBcCiAgICAgICAgICAgICAgLUYgZG9jdW1lbnQ9QCIkWklQX0ZJTEUiIFwKICAgICAgICAgICAgICAtRiBjYXB0aW9uPSIke0JVSUxEX0lORk99IiBcCiAgICAgICAgICAgICAgLUYgcGFyc2VfbW9kZT0iTWFya2Rvd24iCiAgICAgICAgICBlbHNlCiAgICAgICAgICAgIGN1cmwgLXMgLVggUE9TVCAiaHR0cHM6Ly9hcGkudGVsZWdyYW0ub3JnL2JvdCR7VEVMRUdSQU1fQk9UX1RPS0VOfS9zZW5kTWVzc2FnZSIgXAogICAgICAgICAgICAgIC1kIGNoYXRfaWQ9IiR7VEVMRUdSQU1fQ0hBVF9JRH0iIFwKICAgICAgICAgICAgICAtZCB0ZXh0PSIke0JVSUxEX0lORk99IiBcCiAgICAgICAgICAgICAgLWQgcGFyc2VfbW9kZT0iTWFya2Rvd24iCiAgICAgICAgICBmaQo="
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 下载源工作流
+        run: |
+          echo "正在从 cctv18 仓库下载最新工作流..."
+          curl -fsSL "$SOURCE_URL" -o "$TARGET_WORKFLOW"
+          echo "下载完成"
+
+      - name: 应用自定义修改
+        run: |
+          echo "正在应用自定义修改..."
+
+          # 修改工作流名称
+          sed -i "s/^name:.*$/name: $WORKFLOW_NAME/" "$TARGET_WORKFLOW"
+
+          # 修改默认内核后缀
+          sed -i "s/KERNEL_NAME: '.*'/KERNEL_NAME: '$KERNEL_NAME'/" "$TARGET_WORKFLOW"
+
+          # 修改伪装构建时间
+          sed -i "s/export FAKESTAT=\"[^\"]*\"/export FAKESTAT=\"$FAKE_DATE\"/" "$TARGET_WORKFLOW"
+          sed -i "s/export FAKETIME=\"@[^\"]*\"/export FAKETIME=\"@$FAKE_DATE\"/" "$TARGET_WORKFLOW"
+
+          echo "基础修改完成"
+
+      - name: 移除自动发布并添加 Telegram 通知
+        run: |
+          # 解码 Telegram 步骤内容到临时文件
+          echo "$TELEGRAM_STEP_B64" | base64 -d > /tmp/telegram_step.txt
+          
+          python3 << 'PYEOF'
+          import os
+
+          target_file = os.environ['TARGET_WORKFLOW']
+          
+          # 读取 Telegram 步骤
+          with open('/tmp/telegram_step.txt', 'r', encoding='utf-8') as f:
+              telegram_step = f.read()
+
+          with open(target_file, 'r', encoding='utf-8') as f:
+              content = f.read()
+
+          # 移除 "创建发布" 步骤（如果存在）
+          release_start = content.find('      - name: 创建发布')
+          if release_start != -1:
+              release_end = content.find('release_zips/AnyKernel3_*.zip', release_start)
+              if release_end != -1:
+                  release_end = content.find('\n', release_end)
+                  if release_end != -1:
+                      release_end += 1
+                      content = content[:release_start] + content[release_end:]
+                      print("已移除 '创建发布' 步骤")
+
+          # 插入 Telegram 步骤
+          if '发送 Telegram 通知' not in content and telegram_step:
+              insert_marker = 'echo "KSU_TYPENAME=$KSU_TYPENAME" >> $GITHUB_ENV'
+              insert_pos = content.find(insert_marker)
+              if insert_pos != -1:
+                  line_end = content.find('\n', insert_pos)
+                  if line_end != -1:
+                      content = content[:line_end+1] + telegram_step + content[line_end+1:]
+                      print("已添加 Telegram 通知步骤")
+              else:
+                  print("警告: 未找到插入点，Telegram 通知未添加")
+          elif '发送 Telegram 通知' in content:
+              print("Telegram 通知已存在，跳过添加")
+
+          with open(target_file, 'w', encoding='utf-8') as f:
+              f.write(content)
+
+          print("工作流文件已更新")
+          PYEOF
+
+      - name: 验证修改
+        run: |
+          echo "验证修改..."
+          ERRORS=0
+
+          if grep -q "$WORKFLOW_NAME" "$TARGET_WORKFLOW"; then
+            echo "✓ 工作流名称已修改"
+          else
+            echo "✗ 工作流名称修改失败"
+            ERRORS=$((ERRORS+1))
+          fi
+
+          if grep -q "$KERNEL_NAME" "$TARGET_WORKFLOW"; then
+            echo "✓ 内核后缀已修改"
+          else
+            echo "✗ 内核后缀修改失败"
+            ERRORS=$((ERRORS+1))
+          fi
+
+          if grep -q "$FAKE_DATE" "$TARGET_WORKFLOW"; then
+            echo "✓ 伪装时间已修改"
+          else
+            echo "✗ 伪装时间修改失败"
+            ERRORS=$((ERRORS+1))
+          fi
+
+          if ! grep -q "创建发布" "$TARGET_WORKFLOW"; then
+            echo "✓ 已移除自动创建 Release"
+          else
+            echo "✗ 移除自动创建 Release 失败"
+            ERRORS=$((ERRORS+1))
+          fi
+
+          if grep -q "发送 Telegram 通知" "$TARGET_WORKFLOW"; then
+            echo "✓ 已添加 Telegram 通知"
+          else
+            echo "✗ 添加 Telegram 通知失败"
+            ERRORS=$((ERRORS+1))
+          fi
+
+          if [ $ERRORS -gt 0 ]; then
+            echo "验证失败，共 $ERRORS 项错误"
+            exit 1
+          fi
+
+          echo "所有验证通过！"
+
+      - name: 检查变更并提交
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet "$TARGET_WORKFLOW"; then
+            echo "工作流文件无变化，无需提交"
+          else
+            git add "$TARGET_WORKFLOW"
+            git commit -m "sync: update OKI workflow from cctv18 ($(date '+%Y-%m-%d %H:%M:%S'))"
+            git push
+            echo "已提交并推送更新"
+          fi

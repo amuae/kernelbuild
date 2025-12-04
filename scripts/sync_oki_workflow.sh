@@ -220,6 +220,25 @@ echo -e "  ${BLUE}•${NC} 内核后缀: ${GREEN}$KERNEL_NAME${NC}"
 echo -e "  ${BLUE}•${NC} 伪装时间: ${GREEN}$FAKE_DATE${NC}"
 echo -e "  ${BLUE}•${NC} 移除自动创建 Release"
 echo -e "  ${BLUE}•${NC} 添加 Telegram 通知"
+
+# 自动提交更改
 echo ""
-echo -e "${YELLOW}如需提交更改，请运行:${NC}"
-echo -e "  git add -A && git commit -m \"sync: update OKI workflow from cctv18\" && git push"
+echo -e "${YELLOW}[6/6] 提交更改到 Git...${NC}"
+
+# 检查是否有更改
+if git diff --quiet "$TARGET_WORKFLOW" 2>/dev/null; then
+    echo -e "${GREEN}工作流文件无变化，无需提交${NC}"
+else
+    git add "$TARGET_WORKFLOW"
+    COMMIT_MSG="sync: update OKI workflow from cctv18 ($(date '+%Y-%m-%d %H:%M:%S'))"
+    git commit -m "$COMMIT_MSG"
+    
+    echo -e "${YELLOW}推送到远程仓库...${NC}"
+    if git push; then
+        echo -e "${GREEN}========================================${NC}"
+        echo -e "${GREEN}   已成功推送到远程仓库!${NC}"
+        echo -e "${GREEN}========================================${NC}"
+    else
+        echo -e "${RED}推送失败，请手动执行: git push${NC}"
+    fi
+fi
