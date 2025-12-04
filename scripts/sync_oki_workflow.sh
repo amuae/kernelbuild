@@ -48,8 +48,9 @@ echo -e "${YELLOW}[3/5] 修改默认内核后缀...${NC}"
 sed -i "s/KERNEL_NAME: '.*'/KERNEL_NAME: '$KERNEL_NAME'/" "$TARGET_WORKFLOW"
 
 echo -e "${YELLOW}[4/5] 修改伪装构建时间...${NC}"
-sed -i "s/export FAKESTAT=\"[^\"]*\"/export FAKESTAT=\"$FAKE_DATE\"/" "$TARGET_WORKFLOW"
-sed -i "s/export FAKETIME=\"@[^\"]*\"/export FAKETIME=\"@$FAKE_DATE\"/" "$TARGET_WORKFLOW"
+# 只修改定义 FAKESTAT/FAKETIME 的那两行，不替换 wrapper 脚本中的 '$FAKESTAT' 变量引用
+sed -i '/echo.*\$FAKESTAT/!s/export FAKESTAT="[^"]*"/export FAKESTAT="'"$FAKE_DATE"'"/' "$TARGET_WORKFLOW"
+sed -i '/echo.*\$FAKETIME/!s/export FAKETIME="@[^"]*"/export FAKETIME="@'"$FAKE_DATE"'"/' "$TARGET_WORKFLOW"
 
 echo -e "${YELLOW}[5/5] 移除自动创建 Release 并添加 Telegram 通知...${NC}"
 

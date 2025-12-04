@@ -50,9 +50,10 @@ jobs:
           # 修改默认内核后缀
           sed -i "s/KERNEL_NAME: '.*'/KERNEL_NAME: '$KERNEL_NAME'/" "$TARGET_WORKFLOW"
 
-          # 修改伪装构建时间
-          sed -i "s/export FAKESTAT=\"[^\"]*\"/export FAKESTAT=\"$FAKE_DATE\"/" "$TARGET_WORKFLOW"
-          sed -i "s/export FAKETIME=\"@[^\"]*\"/export FAKETIME=\"@$FAKE_DATE\"/" "$TARGET_WORKFLOW"
+          # 只修改定义 FAKESTAT/FAKETIME 的那两行（行首有空格后紧跟 export）
+          # 不替换 wrapper 脚本中 echo 语句里的 '$FAKESTAT' 变量引用
+          sed -i '/echo.*\$FAKESTAT/!s/export FAKESTAT="[^"]*"/export FAKESTAT="'"$FAKE_DATE"'"/' "$TARGET_WORKFLOW"
+          sed -i '/echo.*\$FAKETIME/!s/export FAKETIME="@[^"]*"/export FAKETIME="@'"$FAKE_DATE"'"/' "$TARGET_WORKFLOW"
 
           echo "基础修改完成"
 
