@@ -1,4 +1,4 @@
-name: 加速版构建 6.1.118 欧加真OKI内核
+name: 构建 OKI 内核 6.1.118
 
 env:
   TZ: Asia/Shanghai
