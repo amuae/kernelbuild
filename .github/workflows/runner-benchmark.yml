@@ -119,12 +119,13 @@ jobs:
           echo "=========================================="
           
           cd Geekbench-5.5.1-Linux
-          ./geekbench5 --no-upload | tee gb5_result.txt
+          # Tryout 版本必须上传结果，不能用 --no-upload
+          ./geekbench5 | tee gb5_result.txt
           
           echo ""
           echo ">>> 测试结果摘要"
           echo "----------------------------------------"
-          grep -E "(Single-Core Score|Multi-Core Score)" gb5_result.txt || echo "无法提取分数"
+          grep -E "(Single-Core Score|Multi-Core Score|https://browser.geekbench.com)" gb5_result.txt || echo "请查看上方完整输出"
 
       - name: 总结
         run: |
