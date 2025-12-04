@@ -289,24 +289,13 @@ jobs:
       - name: 修改内核版本信息
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          echo "=== 修改内核版本信息 ==="
-          
-          # 构建完整后缀: android14-11-gca0ef6d17716-ab13624819
-          # 格式: <android_version>-<sub_level>-<kernel_suffix>
           FULL_SUFFIX="${{ inputs.android_version }}-${{ inputs.sub_level }}-${{ inputs.kernel_suffix }}"
           echo "内核后缀: -${FULL_SUFFIX}"
-          
-          # 使用覆盖方式 (与 cctv18 一致)
           sed -i "\$s|echo \"\\\$res\"|echo \"-${FULL_SUFFIX}\"|" ./common/scripts/setlocalversion
           
-          # 设置构建时间
           BUILD_TIMESTAMP=$(date -u -d "${{ inputs.build_time }}" +%s 2>/dev/null || echo "1749578348")
-          echo "构建时间: ${{ inputs.build_time }} (epoch: $BUILD_TIMESTAMP)"
-          
-          # 设置 SOURCE_DATE_EPOCH (用于可重复构建)
-          if [ -f "./build/kernel/kleaf/impl/stamp.bzl" ]; then
+          [ -f "./build/kernel/kleaf/impl/stamp.bzl" ] && \
             sed -i "s/SOURCE_DATE_EPOCH=0/SOURCE_DATE_EPOCH=$BUILD_TIMESTAMP/" ./build/kernel/kleaf/impl/stamp.bzl || true
-          fi
 
       # ==================== 添加 KernelSU ====================
       - name: 添加 KernelSU
