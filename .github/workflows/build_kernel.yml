@@ -101,7 +101,6 @@ jobs:
 
       - name: 设置环境变量
         run: |
-          # 基础配置 (与 WildKernels 一致)
           CONFIG="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}"
           ROOT="$GITHUB_WORKSPACE"
           KERNEL_ROOT="$ROOT/$CONFIG"
@@ -121,7 +120,6 @@ jobs:
 
       - name: 配置构建环境
         run: |
-          # 并行克隆构建工具 (与 WildKernels 一致)
           AOSP_MIRROR=https://android.googlesource.com
           BRANCH=main-kernel-2025
           
@@ -129,7 +127,6 @@ jobs:
           git clone $AOSP_MIRROR/platform/system/tools/mkbootimg -b $BRANCH --depth 1 mkbootimg &
           wait
           
-          # 设置工具路径 (与 WildKernels 一致)
           echo "AVBTOOL=$GITHUB_WORKSPACE/kernel-build-tools/linux-x86/bin/avbtool" >> $GITHUB_ENV
           echo "MKBOOTIMG=$GITHUB_WORKSPACE/mkbootimg/mkbootimg.py" >> $GITHUB_ENV
           echo "UNPACK_BOOTIMG=$GITHUB_WORKSPACE/mkbootimg/unpack_bootimg.py" >> $GITHUB_ENV
@@ -164,7 +161,6 @@ jobs:
       # ==================== 配置 ccache ====================
       - name: 配置 ccache
         run: |
-          # 使用 sub_level 区分缓存 (参考 cctv18)
           CACHE_KEY="${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
           echo "CCACHE_DIR=$HOME/.ccache_$CACHE_KEY" >> $GITHUB_ENV
           echo "CCACHE_MAXSIZE=3G" >> $GITHUB_ENV
@@ -182,7 +178,6 @@ jobs:
 
       - name: 初始化 ccache
         run: |
-          # 设置 ccache 环境变量 (参考 cctv18)
           export CCACHE_COMPILERCHECK="none"
           export CCACHE_BASEDIR="${{ github.workspace }}"
           export CCACHE_NOHASHDIR="true"
@@ -213,7 +208,6 @@ jobs:
         id: patch_level
         run: |
           # 根据 kernel_version 和 sub_level 确定 os_patch_level
-          # 映射表基于 WildKernels 项目
           KERNEL_VER="${{ inputs.kernel_version }}"
           SUB_LEVEL="${{ inputs.sub_level }}"
           
