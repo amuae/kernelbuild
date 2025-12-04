@@ -1,0 +1,191 @@
+name: 同步 OKI 工作流
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 每天 UTC 0:00 (北京时间 8:00) 检查更新
+    - cron: '0 0 * * *'
+
+env:
+  # 源工作流 URL
+  SOURCE_URL: "https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8650/refs/heads/main/.github/workflows/fastbuild_6.1.118.yml"
+  TARGET_FILE: ".github/workflows/oki-6.1.118-fastbuild.yml"
+  
+  # 自定义配置
+  WORKFLOW_NAME: "构建 OKI 内核 6.1.118"
+  KERNEL_NAME: "android14-11-o-g2b8edc801b38"
+  FAKE_DATE: "2025-08-25 13:49:08"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 下载最新工作流
+        run: |
+          echo "从 cctv18 下载最新工作流..."
+          curl -fsSL "$SOURCE_URL" -o "$TARGET_FILE.new"
+          
+          if [ ! -s "$TARGET_FILE.new" ]; then
+            echo "错误: 下载失败或文件为空"
+            exit 1
+          fi
+          echo "下载成功!"
+
+      - name: 应用自定义修改
+        run: |
+          TARGET="${TARGET_FILE}.new"
+          
+          echo "修改工作流名称..."
+          sed -i "s/^name:.*$/name: $WORKFLOW_NAME/" "$TARGET"
+          
+          echo "修改默认内核后缀..."
+          sed -i "s/KERNEL_NAME: '.*'/KERNEL_NAME: '$KERNEL_NAME'/" "$TARGET"
+          
+          echo "修改伪装构建时间..."
+          sed -i "s/export FAKESTAT=\"[^\"]*\"/export FAKESTAT=\"$FAKE_DATE\"/g" "$TARGET"
+          sed -i "s/export FAKETIME=\"@[^\"]*\"/export FAKETIME=\"@$FAKE_DATE\"/g" "$TARGET"
+
+      - name: 移除自动创建 Release 并添加 Telegram 通知
+        run: |
+          TARGET="${TARGET_FILE}.new"
+          
+          python3 << 'PYTHON_SCRIPT'
+          import re
+          import os
+          
+          target = os.environ.get('TARGET_FILE', '.github/workflows/oki-6.1.118-fastbuild.yml') + '.new'
+          
+          with open(target, 'r', encoding='utf-8') as f:
+              content = f.read()
+          
+          # 移除 "创建发布" 步骤
+          pattern = r'''      - name: 创建发布
+                id: create_release
+                uses: softprops/action-gh-release@v1
+                with:
+                  tag_name: .*?
+                  name: .*?
+                  body: \|.*?draft: false
+                  prerelease: false
+                  files: \|
+                    release_zips/AnyKernel3_\*\.zip
+
+          '''
+          content = re.sub(pattern, '', content, flags=re.DOTALL)
+          
+          # 检查是否已有 Telegram 通知
+          if '发送 Telegram 通知' not in content:
+              telegram_step = '''
+              # ==================== Telegram 通知 ====================
+              - name: 发送 Telegram 通知
+                if: success()
+                env:
+                  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+                  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+                run: |
+                  if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+                    echo "Telegram 配置未设置，跳过通知"
+                    exit 0
+                  fi
+                  
+                  # KPM 状态文本
+                  if [[ "${{ github.event.inputs.kpm_enable }}" == "true" ]]; then
+                    KPM_STATUS="✅ 启用"
+                  else
+                    KPM_STATUS="❌ 禁用"
+                  fi
+                  
+                  # SUSFS 状态文本
+                  if [[ "${{ github.event.inputs.susfs_enable }}" == "true" ]]; then
+                    SUSFS_STATUS="✅ 启用"
+                  else
+                    SUSFS_STATUS="❌ 禁用"
+                  fi
+                  
+                  # 构建信息
+                  BUILD_INFO=$(cat << EOF
+                  🌽 *OKI 内核构建成功*
+                  
+                  📱 *机型*: 欧加真骁龙8Gen3通用
+                  🔢 *内核名*: ${{ env.KERNEL_VERSION }}.118-${{ env.KERNEL_NAME }}
+                  🕐 *内核时间*: ${{ env.FAKETIME }}
+                  🔧 *KernelSU*: ${{ env.KSU_TYPENAME }} (v${{ needs.build.outputs.ksuver }})
+                  🔒 *SUSFS*: ${SUSFS_STATUS}
+                  ⚡ *KPM*: ${KPM_STATUS}
+                  
+                  🔗 [查看 Actions](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+                  EOF
+                  )
+
+                  # 查找并发送 AnyKernel3 包
+                  ZIP_FILE=$(ls release_zips/AnyKernel3_*.zip 2>/dev/null | head -1)
+                  if [ -n "$ZIP_FILE" ]; then
+                    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \\
+                      -F chat_id="${TELEGRAM_CHAT_ID}" \\
+                      -F document=@"$ZIP_FILE" \\
+                      -F caption="${BUILD_INFO}" \\
+                      -F parse_mode="Markdown"
+                  else
+                    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \\
+                      -d chat_id="${TELEGRAM_CHAT_ID}" \\
+                      -d text="${BUILD_INFO}" \\
+                      -d parse_mode="Markdown"
+                  fi
+          '''
+              # 在 release job 的设置环境变量步骤后添加
+              if 'echo "KSU_TYPENAME=$KSU_TYPENAME"' in content:
+                  content = content.replace(
+                      'echo "KSU_TYPENAME=$KSU_TYPENAME" >> $GITHUB_ENV\n         \n      - name: 创建发布',
+                      'echo "KSU_TYPENAME=$KSU_TYPENAME" >> $GITHUB_ENV' + telegram_step
+                  )
+          
+          with open(target, 'w', encoding='utf-8') as f:
+              f.write(content)
+          
+          print("自定义修改已应用")
+          PYTHON_SCRIPT
+
+      - name: 检查是否有变更
+        id: check_changes
+        run: |
+          # 比较新旧文件
+          if [ -f "$TARGET_FILE" ]; then
+            if diff -q "$TARGET_FILE" "${TARGET_FILE}.new" > /dev/null 2>&1; then
+              echo "工作流无变化，跳过提交"
+              echo "has_changes=false" >> $GITHUB_OUTPUT
+            else
+              echo "检测到工作流变化"
+              echo "has_changes=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "目标文件不存在，将创建新文件"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 更新工作流文件
+        if: steps.check_changes.outputs.has_changes == 'true'
+        run: |
+          mv "${TARGET_FILE}.new" "$TARGET_FILE"
+          echo "工作流文件已更新"
+
+      - name: 提交变更
+        if: steps.check_changes.outputs.has_changes == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add "$TARGET_FILE"
+          git commit -m "sync: 从 cctv18 同步 OKI 工作流更新"
+          git push
+
+      - name: 清理临时文件
+        if: always()
+        run: |
+          rm -f "${TARGET_FILE}.new"

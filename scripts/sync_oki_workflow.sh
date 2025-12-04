@@ -14,8 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 配置
-CCTV18_REPO="https://github.com/cctv18/android_kernel_common_oneplus_sm8650.git"
-SOURCE_WORKFLOW="fastbuild_6.1.118.yml"
+SOURCE_URL="https://raw.githubusercontent.com/cctv18/oppo_oplus_realme_sm8650/refs/heads/main/.github/workflows/fastbuild_6.1.118.yml"
 TARGET_WORKFLOW=".github/workflows/oki-6.1.118-fastbuild.yml"
 
 # 自定义配置
@@ -34,42 +33,29 @@ echo -e "${BLUE}========================================${NC}"
 # 切换到项目根目录
 cd "$PROJECT_ROOT"
 
-# 创建临时目录
-TEMP_DIR=$(mktemp -d)
-trap "rm -rf $TEMP_DIR" EXIT
-
 echo -e "${YELLOW}[1/6] 从 cctv18 仓库下载最新工作流...${NC}"
-# 使用 sparse checkout 只下载工作流文件
-cd "$TEMP_DIR"
-git init -q
-git remote add origin "$CCTV18_REPO"
-git config core.sparseCheckout true
-echo ".github/workflows/$SOURCE_WORKFLOW" >> .git/info/sparse-checkout
-git pull origin main --depth=1 -q
-
-if [ ! -f ".github/workflows/$SOURCE_WORKFLOW" ]; then
-    echo -e "${RED}错误: 无法找到源工作流文件${NC}"
+# 直接使用 curl 下载
+if ! curl -fsSL "$SOURCE_URL" -o "$TARGET_WORKFLOW"; then
+    echo -e "${RED}错误: 无法下载源工作流文件${NC}"
+    echo -e "${RED}URL: $SOURCE_URL${NC}"
     exit 1
 fi
+echo -e "${GREEN}下载成功!${NC}"
 
-echo -e "${YELLOW}[2/6] 复制工作流到项目...${NC}"
-cp ".github/workflows/$SOURCE_WORKFLOW" "$PROJECT_ROOT/$TARGET_WORKFLOW"
-cd "$PROJECT_ROOT"
-
-echo -e "${YELLOW}[3/6] 修改工作流名称...${NC}"
+echo -e "${YELLOW}[2/6] 修改工作流名称...${NC}"
 # 修改工作流名称
 sed -i "s/^name:.*$/name: $WORKFLOW_NAME/" "$TARGET_WORKFLOW"
 
-echo -e "${YELLOW}[4/6] 修改默认内核后缀...${NC}"
+echo -e "${YELLOW}[3/6] 修改默认内核后缀...${NC}"
 # 修改 KERNEL_NAME
 sed -i "s/KERNEL_NAME: '.*'/KERNEL_NAME: '$KERNEL_NAME'/" "$TARGET_WORKFLOW"
 
-echo -e "${YELLOW}[5/6] 修改伪装构建时间...${NC}"
+echo -e "${YELLOW}[4/6] 修改伪装构建时间...${NC}"
 # 修改 FAKESTAT 和 FAKETIME
 sed -i "s/export FAKESTAT=\"[^\"]*\"/export FAKESTAT=\"$FAKE_DATE\"/" "$TARGET_WORKFLOW"
 sed -i "s/export FAKETIME=\"@[^\"]*\"/export FAKETIME=\"@$FAKE_DATE\"/" "$TARGET_WORKFLOW"
 
-echo -e "${YELLOW}[6/6] 移除自动创建 Release 并添加 Telegram 通知...${NC}"
+echo -e "${YELLOW}[5/6] 移除自动创建 Release 并添加 Telegram 通知...${NC}"
 
 # 使用 Python 进行复杂的文本处理（移除 release step 并添加 Telegram 通知）
 python3 << 'PYTHON_SCRIPT'
@@ -172,6 +158,16 @@ with open(target_file, 'w', encoding='utf-8') as f:
 
 print("工作流文件已更新")
 PYTHON_SCRIPT
+
+echo -e "${YELLOW}[6/6] 验证修改...${NC}"
+# 验证关键修改
+if grep -q "$WORKFLOW_NAME" "$TARGET_WORKFLOW" && \
+   grep -q "$KERNEL_NAME" "$TARGET_WORKFLOW" && \
+   grep -q "$FAKE_DATE" "$TARGET_WORKFLOW"; then
+    echo -e "${GREEN}验证通过!${NC}"
+else
+    echo -e "${RED}警告: 部分修改可能未成功应用${NC}"
+fi
 
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}   同步完成！${NC}"
