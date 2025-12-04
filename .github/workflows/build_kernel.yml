@@ -707,11 +707,32 @@ jobs:
           echo "内核构建完成"
           ccache -s
 
-      # ==================== 打包 ====================
-      - name: 克隆 AnyKernel3
+      # KPM 后处理 (仅对 SukiSU + KPM 生效)
+      - name: 应用 KPM 补丁
+        if: inputs.ksu_type == 'SukiSU' && inputs.kpm_enable == true
         run: |
-          git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0
+          echo "=== 应用 KPM 补丁 ==="
+          cd $KERNEL_ROOT
+          
+          # 找到 Image 文件位置
+          if [ -f "out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image" ]; then
+            IMAGE_DIR="out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist"
+          elif [ -f "bazel-bin/common/kernel_aarch64/Image" ]; then
+            IMAGE_DIR="bazel-bin/common/kernel_aarch64"
+          else
+            echo "错误: 找不到 Image 文件"
+            exit 1
+          fi
+          
+          cd "$IMAGE_DIR"
+          curl -LO https://github.com/SukiSU-Ultra/SukiSU_KernelPatch_patch/releases/latest/download/patch_linux
+          chmod +x patch_linux
+          ./patch_linux
+          rm -f Image
+          mv oImage Image
+          echo "KPM 补丁应用完成"
 
+      # ==================== 打包 ====================
       - name: 打包内核
         run: |
           echo "=== 打包内核 ==="
@@ -751,7 +772,7 @@ jobs:
           fi
           
           cd bootimgs
-          gzip -n -k -f -9 Image > Image.gz 2>/dev/null || gzip -n -f -9 -c Image > Image.gz
+          gzip -n -k -f -9 Image
           
           # 创建 boot.img
           $MKBOOTIMG --header_version 4 --kernel Image --output boot.img
