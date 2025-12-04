@@ -276,7 +276,7 @@ jobs:
       - name: 修改内核版本信息
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          FULL_SUFFIX="${{ inputs.android_version }}-${{ inputs.sub_level }}-${{ inputs.kernel_suffix }}"
+          FULL_SUFFIX="${{ inputs.android_version }}-11-${{ inputs.kernel_suffix }}"
           echo "内核后缀: -${FULL_SUFFIX}"
           sed -i "\$s|echo \"\\\$res\"|echo \"-${FULL_SUFFIX}\"|" ./common/scripts/setlocalversion
           
