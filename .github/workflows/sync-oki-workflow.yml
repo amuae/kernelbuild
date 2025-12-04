@@ -1,4 +1,4 @@
-name: 同步 OKI 工作流
+name: "同步 OKI 工作流"
 
 on:
   schedule:
