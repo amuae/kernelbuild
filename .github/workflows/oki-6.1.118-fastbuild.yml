@@ -830,7 +830,8 @@ jobs:
           🌽 *OKI 内核构建成功*
           
           📱 *机型*: 欧加真骁龙8Gen3通用
-          🔢 *内核版本*: ${{ env.FULL_VERSION }}
+          🔢 *内核名*: ${{ env.KERNEL_VERSION }}.118-${{ env.KERNEL_NAME }}
+          🕐 *内核时间*: ${{ env.FAKETIME }}
           🔧 *KernelSU*: ${{ env.KSU_TYPENAME }} (v${{ needs.build.outputs.ksuver }})
           🔒 *SUSFS*: ${SUSFS_STATUS}
           ⚡ *KPM*: ${KPM_STATUS}

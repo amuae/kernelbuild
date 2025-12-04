@@ -779,7 +779,8 @@ jobs:
           🌽 *GKI 内核构建成功*
           
           📱 *Android*: ${{ inputs.android_version }}
-          🔢 *内核版本*: ${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}
+          🔢 *内核名*: ${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-${{ inputs.android_version }}-${{ env.KMI_GEN }}-${{ inputs.kernel_suffix }}
+          🕐 *内核时间*: ${{ inputs.build_time }}
           🔧 *KernelSU*: ${{ inputs.ksu_type }} (v${{ env.KSUVER }})
           🔒 *SUSFS*: ✅ 启用
           ⚡ *KPM*: ${KPM_STATUS}
