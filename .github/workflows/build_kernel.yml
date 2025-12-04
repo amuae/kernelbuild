@@ -158,51 +158,6 @@ jobs:
           git clone https://github.com/WildKernels/kernel_patches.git &
           wait
 
-      # ==================== 配置 ccache ====================
-      - name: 配置 ccache
-        run: |
-          CACHE_KEY="${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
-          echo "CCACHE_DIR=$HOME/.ccache_$CACHE_KEY" >> $GITHUB_ENV
-          echo "CCACHE_MAXSIZE=3G" >> $GITHUB_ENV
-          echo "当前构建内核版本: ${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
-          
-      - name: 恢复 ccache 缓存
-        uses: actions/cache@v4
-        id: ccache-restore
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ runner.os }}-main
-          restore-keys: |
-            ccache-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ runner.os }}-
-            ccache-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-
-
-      - name: 初始化 ccache
-        run: |
-          export CCACHE_COMPILERCHECK="none"
-          export CCACHE_BASEDIR="${{ github.workspace }}"
-          export CCACHE_NOHASHDIR="true"
-          export CCACHE_HARDLINK="true"
-          export CCACHE_DIR="${{ env.CCACHE_DIR }}"
-          export CCACHE_MAXSIZE="${{ env.CCACHE_MAXSIZE }}"
-          
-          # 确保 ccache 目录存在
-          mkdir -p "$CCACHE_DIR"
-          
-          # 配置缓存大小和压缩
-          ccache -M "$CCACHE_MAXSIZE"
-          ccache -o compression=true
-          ccache -o compiler_check=none
-          
-          # 显示初始缓存状态
-          echo "ccache 初始状态:"
-          ccache -s
-          
-          # 如果缓存恢复命中，显示详细信息
-          if [ "${{ steps.ccache-restore.outputs.cache-hit }}" == 'true' ]; then
-            echo "ccache 缓存命中详情:"
-            ccache -sv
-          fi
-
       # ==================== 下载内核源码 ====================
       - name: 确定安全补丁级别
         id: patch_level
@@ -689,15 +644,7 @@ jobs:
         run: |
           echo "=== 开始构建内核 ==="
           
-          # 配置 ccache
-          export PATH="/usr/lib/ccache:$PATH"
-          export CCACHE_DIR="${{ env.CCACHE_DIR }}"
-          export CCACHE_COMPILERCHECK="none"
-          export CCACHE_BASEDIR="${{ github.workspace }}"
-          export CCACHE_NOHASHDIR="true"
-          export CCACHE_HARDLINK="true"
-          
-          # 构建
+          # 构建 (Bazel 有自己的缓存系统，无需 ccache)
           if [ -f "build/build.sh" ]; then
             LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
           else
@@ -705,7 +652,6 @@ jobs:
           fi
           
           echo "内核构建完成"
-          ccache -s
 
       # KPM 后处理 (仅对 SukiSU + KPM 生效)
       - name: 应用 KPM 补丁
