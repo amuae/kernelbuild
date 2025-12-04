@@ -1,410 +1,644 @@
-name: Build GKI Kernel (SukiSU+SUSFS)
+name: 构建 GKI 内核
 
 permissions:
   contents: write
   actions: write
 
+env:
+  TZ: Asia/Shanghai
+
 on:
-  push:
-    branches:
-      - sukisu
-    paths:
-      - '.github/workflows/build_kernel.yml'
   workflow_dispatch:
     inputs:
       android_version:
-        description: 'Android版本'
+        description: 'Android 版本'
         required: true
         default: 'android14'
         type: choice
         options:
           - android14
           - android15
+          - android16
       kernel_version:
         description: '内核版本'
         required: true
         default: '6.1'
         type: choice
         options:
-          - '5.15'
           - '6.1'
           - '6.6'
-      os_patch_level:
-        description: '安全补丁 (YYYY-MM)'
+          - '6.12'
+      sub_level:
+        description: '内核子版本号 (如 118、124 等)'
         required: true
-        default: '2025-01'
+        default: '118'
         type: string
-      hook_method:
-        description: 'Hook方法'
+      ksu_type:
+        description: 'KernelSU 变体'
         required: true
-        default: 'manual'
+        default: 'sukisu'
         type: choice
         options:
-          - manual
-          - syscall
-          - kprobes
-      enable_bbg:
-        description: 'BBG基带保护'
-        required: false
+          - sukisu
+          - ksunext
+          - mksu
+          - ksu
+      susfs_enable:
+        description: '启用 SUSFS'
+        required: true
         default: true
         type: boolean
-      enable_ipset:
-        description: 'IPSet支持'
-        required: false
-        default: true
-        type: boolean
-      module_bypass:
-        description: '模块绕过'
-        required: false
+      kpm_enable:
+        description: '启用 KPM (仅 SukiSU)'
+        required: true
         default: false
         type: boolean
+      features:
+        description: '额外功能 (逗号分隔: lz4kd,ipset,bbg,rekernel,wireguard)'
+        required: false
+        default: 'ipset,bbg,wireguard'
+        type: string
+      kernel_suffix:
+        description: '内核后缀 (留空使用默认)'
+        required: false
+        default: ''
+        type: string
       create_release:
-        description: '发布Release'
+        description: '创建 Release'
         required: false
         default: false
         type: boolean
-      kernel_name:
-        description: '内核名称后缀'
-        required: false
-        default: 'gca0ef6d17716-ab13624819'
-        type: string
-      build_time:
-        description: '构建时间'
-        required: false
-        default: 'Tue Jun 10 18:59:08 UTC 2025'
-        type: string
 
 jobs:
   build:
-    name: 构建内核
-    runs-on: ubuntu-22.04
+    name: "构建 ${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
+    runs-on: ubuntu-latest
+    
+    env:
+      # 解析 features 输入
+      LZ4KD_ENABLE: ${{ contains(inputs.features, 'lz4kd') }}
+      IPSET_ENABLE: ${{ contains(inputs.features, 'ipset') }}
+      BBG_ENABLE: ${{ contains(inputs.features, 'bbg') }}
+      REKERNEL_ENABLE: ${{ contains(inputs.features, 'rekernel') }}
+      WIREGUARD_ENABLE: ${{ contains(inputs.features, 'wireguard') }}
     
     steps:
+      # ==================== 环境准备 ====================
+      - name: 检查初始磁盘空间
+        run: |
+          echo "===== 初始磁盘空间 (GB) ====="
+          df -BG
+          
+      - name: 清理磁盘空间
+        run: |
+          # 清理不必要的软件包以释放空间
+          sudo apt-mark hold firefox
+          sudo apt-mark hold libc-bin
+          sudo apt purge -y man-db 2>/dev/null || true
+          sudo rm -rf /var/lib/man-db/auto-update 2>/dev/null || true
+          curl -Ls https://raw.githubusercontent.com/apache/arrow/main/ci/scripts/util_free_space.sh | bash
+          
+      - name: 检查清理后磁盘空间
+        run: |
+          echo "===== 清理后磁盘空间 (GB) ====="
+          df -BG
+
+      - name: 设置环境变量
+        run: |
+          # 基础配置 (与 WildKernels 一致)
+          CONFIG="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}"
+          ROOT="$GITHUB_WORKSPACE"
+          KERNEL_ROOT="$ROOT/$CONFIG"
+          SUSFS4KSU="$ROOT/susfs4ksu"
+          KERNEL_PATCHES="$ROOT/kernel_patches"
+          ANYKERNEL3="$ROOT/AnyKernel3"
+          
+          echo "CONFIG=$CONFIG" >> $GITHUB_ENV
+          echo "ROOT=$ROOT" >> $GITHUB_ENV
+          echo "KERNEL_ROOT=$KERNEL_ROOT" >> $GITHUB_ENV
+          echo "SUSFS4KSU=$SUSFS4KSU" >> $GITHUB_ENV
+          echo "KERNEL_PATCHES=$KERNEL_PATCHES" >> $GITHUB_ENV
+          echo "ANYKERNEL3=$ANYKERNEL3" >> $GITHUB_ENV
+          echo "DEFCONFIG=$KERNEL_ROOT/common/arch/arm64/configs/gki_defconfig" >> $GITHUB_ENV
+          
+          mkdir -p "$KERNEL_ROOT"
+
       - name: 配置构建环境
         run: |
-          echo "=== 配置构建环境 ==="
+          # 安装必要依赖 (精简版，参考 cctv18)
           sudo apt-get update -qq
-          sudo apt-get install -y -qq git curl wget build-essential bc bison flex libssl-dev libelf-dev zip python3 python3-pip rsync >/dev/null 2>&1
+          sudo apt-get install -y --no-install-recommends \
+            binutils python-is-python3 libssl-dev libelf-dev ccache aria2 >/dev/null 2>&1
           
-          # 安装 repo 工具
-          mkdir -p ~/bin
-          curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-          chmod a+rx ~/bin/repo
-          echo "$HOME/bin" >> $GITHUB_PATH
+          # 并行克隆构建工具 (与 WildKernels 一致)
+          AOSP_MIRROR=https://android.googlesource.com
+          BRANCH=main-kernel-2025
           
-          # 强制使用 IPv4
-          git config --global url."https://github.com/".insteadOf "git://github.com/"
-          git config --global http.version HTTP/1.1
+          git clone $AOSP_MIRROR/kernel/prebuilts/build-tools -b $BRANCH --depth 1 kernel-build-tools &
+          git clone $AOSP_MIRROR/platform/system/tools/mkbootimg -b $BRANCH --depth 1 mkbootimg &
+          wait
           
-          echo "环境配置完成"
-      
+          # 设置工具路径 (与 WildKernels 一致)
+          echo "AVBTOOL=$GITHUB_WORKSPACE/kernel-build-tools/linux-x86/bin/avbtool" >> $GITHUB_ENV
+          echo "MKBOOTIMG=$GITHUB_WORKSPACE/mkbootimg/mkbootimg.py" >> $GITHUB_ENV
+          echo "UNPACK_BOOTIMG=$GITHUB_WORKSPACE/mkbootimg/unpack_bootimg.py" >> $GITHUB_ENV
+          echo "BOOT_SIGN_KEY_PATH=$GITHUB_WORKSPACE/kernel-build-tools/linux-x86/share/avb/testkey_rsa2048.pem" >> $GITHUB_ENV
+          echo "PATH=$GITHUB_WORKSPACE/kernel-build-tools/linux-x86/bin:$PATH" >> $GITHUB_ENV
+          
+          # 配置 repo 工具
+          mkdir -p ./git-repo
+          curl -s https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
+          chmod a+rx ./git-repo/repo
+          echo "REPO=$GITHUB_WORKSPACE/git-repo/repo" >> $GITHUB_ENV
+          
+          echo "构建环境配置完成"
+
+      - name: 设置 boot 签名密钥
+        env:
+          BOOT_SIGN_KEY: ${{ secrets.BOOT_SIGN_KEY }}
+        run: |
+          if [ ! -z "$BOOT_SIGN_KEY" ]; then
+            echo "$BOOT_SIGN_KEY" > ./kernel-build-tools/linux-x86/share/avb/testkey_rsa2048.pem
+          fi
+
+      - name: 克隆 AnyKernel3 和依赖
+        run: |
+          ANYKERNEL_BRANCH="gki-2.0"
+          SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+          
+          git clone https://github.com/WildKernels/AnyKernel3.git -b "$ANYKERNEL_BRANCH" &
+          git clone https://github.com/WildKernels/kernel_patches.git &
+          wait
+
+      # ==================== 配置 ccache ====================
+      - name: 配置 ccache
+        run: |
+          # 使用 sub_level 区分缓存 (参考 cctv18)
+          CACHE_KEY="${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
+          echo "CCACHE_DIR=$HOME/.ccache_$CACHE_KEY" >> $GITHUB_ENV
+          echo "CCACHE_MAXSIZE=3G" >> $GITHUB_ENV
+          echo "当前构建内核版本: ${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
+          
+      - name: 恢复 ccache 缓存
+        uses: actions/cache@v4
+        id: ccache-restore
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ runner.os }}-main
+          restore-keys: |
+            ccache-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ runner.os }}-
+            ccache-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-
+
+      - name: 初始化 ccache
+        run: |
+          # 设置 ccache 环境变量 (参考 cctv18)
+          export CCACHE_COMPILERCHECK="none"
+          export CCACHE_BASEDIR="${{ github.workspace }}"
+          export CCACHE_NOHASHDIR="true"
+          export CCACHE_HARDLINK="true"
+          export CCACHE_DIR="${{ env.CCACHE_DIR }}"
+          export CCACHE_MAXSIZE="${{ env.CCACHE_MAXSIZE }}"
+          
+          # 确保 ccache 目录存在
+          mkdir -p "$CCACHE_DIR"
+          
+          # 配置缓存大小和压缩
+          ccache -M "$CCACHE_MAXSIZE"
+          ccache -o compression=true
+          ccache -o compiler_check=none
+          
+          # 显示初始缓存状态
+          echo "ccache 初始状态:"
+          ccache -s
+          
+          # 如果缓存恢复命中，显示详细信息
+          if [ "${{ steps.ccache-restore.outputs.cache-hit }}" == 'true' ]; then
+            echo "ccache 缓存命中详情:"
+            ccache -sv
+          fi
+
+      # ==================== 下载内核源码 ====================
+      - name: 确定安全补丁级别
+        id: patch_level
+        run: |
+          # 根据 kernel_version 和 sub_level 确定 os_patch_level
+          # 映射表基于 WildKernels 项目
+          KERNEL_VER="${{ inputs.kernel_version }}"
+          SUB_LEVEL="${{ inputs.sub_level }}"
+          
+          get_patch_level() {
+            local kv=$1
+            local sl=$2
+            
+            case "$kv" in
+              "6.1")
+                # Android 14 - 6.1 映射表
+                case "$sl" in
+                  25) echo "2023-10" ;;
+                  43) echo "2023-11" ;;
+                  57) echo "2024-01" ;;
+                  68) echo "2024-03" ;;
+                  75) echo "2024-05" ;;
+                  78) echo "2024-06" ;;
+                  84) echo "2024-07" ;;
+                  90) echo "2024-08" ;;
+                  93) echo "2024-09" ;;
+                  99) echo "2024-10" ;;
+                  112) echo "2024-11" ;;
+                  115) echo "2024-12" ;;
+                  118) echo "2025-01" ;;
+                  124) echo "2025-02" ;;
+                  128) echo "2025-03" ;;
+                  129) echo "2025-04" ;;
+                  134) echo "2025-05" ;;
+                  138) echo "2025-06" ;;
+                  141) echo "2025-07" ;;
+                  145) echo "2025-09" ;;
+                  *) echo "lts" ;;
+                esac
+                ;;
+              "6.6")
+                # Android 15 - 6.6 映射表
+                case "$sl" in
+                  30) echo "2024-08" ;;
+                  46) echo "2024-09" ;;
+                  50) echo "2024-10" ;;
+                  56) echo "2024-11" ;;
+                  57) echo "2024-12" ;;
+                  58) echo "2025-01" ;;
+                  66) echo "2025-02" ;;
+                  77) echo "2025-03" ;;
+                  82) echo "2025-04" ;;
+                  87) echo "2025-05" ;;
+                  89) echo "2025-06" ;;
+                  92) echo "2025-07" ;;
+                  98) echo "2025-09" ;;
+                  102) echo "2025-10" ;;
+                  *) echo "lts" ;;
+                esac
+                ;;
+              "6.12")
+                # Android 16 - 6.12 映射表
+                case "$sl" in
+                  5) echo "2025-03" ;;
+                  8) echo "2025-04" ;;
+                  13) echo "2025-05" ;;
+                  17) echo "2025-06" ;;
+                  22) echo "2025-07" ;;
+                  31) echo "2025-09" ;;
+                  *) echo "lts" ;;
+                esac
+                ;;
+              *)
+                echo "lts"
+                ;;
+            esac
+          }
+          
+          OS_PATCH_LEVEL=$(get_patch_level "$KERNEL_VER" "$SUB_LEVEL")
+          echo "OS_PATCH_LEVEL=$OS_PATCH_LEVEL" >> $GITHUB_ENV
+          echo "os_patch_level=$OS_PATCH_LEVEL" >> $GITHUB_OUTPUT
+          echo "内核 $KERNEL_VER.$SUB_LEVEL 对应安全补丁级别: $OS_PATCH_LEVEL"
+
       - name: 下载内核源码
+        working-directory: ${{ env.KERNEL_ROOT }}
         run: |
           echo "=== 下载内核源码 ==="
+          FORMATTED_BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ env.OS_PATCH_LEVEL }}"
+          echo "分支: common-${FORMATTED_BRANCH}"
           
-          # Determine sublevel
-          case "${{ inputs.kernel_version }}" in
-            "5.15") SUBLEVEL="119" ;;
-            "6.1")  SUBLEVEL="118" ;;
-            "6.6")  SUBLEVEL="65" ;;
-            *)      SUBLEVEL="118" ;;
-          esac
-          
-          FORMATTED_BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.os_patch_level }}"
-          SOURCE_DIR="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${SUBLEVEL}"
-          
-          echo "Branch: common-${FORMATTED_BRANCH}"
-          echo "Source Dir: ${SOURCE_DIR}"
-          
-          mkdir -p "${SOURCE_DIR}"
-          cd "${SOURCE_DIR}"
-          
-          ~/bin/repo init --depth=1 \
+          $REPO init --depth=1 \
             --u https://android.googlesource.com/kernel/manifest \
             -b "common-${FORMATTED_BRANCH}" \
             --repo-rev=v2.16
           
+          # 检查是否为 deprecated 分支
           REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common "${FORMATTED_BRANCH}" 2>/dev/null || true)
           if echo "$REMOTE_BRANCH" | grep -q deprecated; then
-            echo "Branch is deprecated, updating manifest..."
+            echo "分支已弃用，更新 manifest..."
             sed -i "s/\"${FORMATTED_BRANCH}\"/\"deprecated\/${FORMATTED_BRANCH}\"/g" .repo/manifests/default.xml
           fi
           
-          CPU_COUNT=$(nproc)
-          echo "Syncing with ${CPU_COUNT} parallel jobs..."
-          ~/bin/repo sync -c -j"${CPU_COUNT}" --no-tags --fail-fast
+          $REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast
           
+          # 获取实际 sublevel (验证)
           if [ -f "common/Makefile" ]; then
-            ACTUAL_SUBLEVEL=$(grep '^SUBLEVEL = ' common/Makefile | awk '{print $3}' || echo "${SUBLEVEL}")
-            if [ -n "$ACTUAL_SUBLEVEL" ]; then
-              SUBLEVEL="$ACTUAL_SUBLEVEL"
-            fi
+            ACTUAL_SUBLEVEL=$(grep '^SUBLEVEL = ' common/Makefile | awk '{print $3}')
+            echo "SUBLEVEL=$ACTUAL_SUBLEVEL" >> $GITHUB_ENV
+            echo "实际内核版本: ${{ inputs.kernel_version }}.$ACTUAL_SUBLEVEL"
+          else
+            echo "SUBLEVEL=${{ inputs.sub_level }}" >> $GITHUB_ENV
           fi
-          
-          echo "Kernel version: ${{ inputs.kernel_version }}.${SUBLEVEL}"
-          cd ..
-          
-          echo "SOURCE_DIR=${SOURCE_DIR}" >> $GITHUB_ENV
-          echo "SUBLEVEL=${SUBLEVEL}" >> $GITHUB_ENV
-      
-      - name: 集成 SukiSU
+
+      - name: 清理 ABI 保护和 dirty 后缀
+        working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          echo "=== 集成 SukiSU ==="
-          cd "${{ env.SOURCE_DIR }}"
+          # 移除 ABI 保护
+          rm -f common/android/abi_gki_protected_exports_* || true
           
-          curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s susfs-main
+          # 移除 dirty 后缀
+          sed -i 's/ -dirty//g; $i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' common/scripts/setlocalversion
+
+      # ==================== 添加 KernelSU ====================
+      - name: 添加 KernelSU
+        id: ksu_version
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          echo "=== 添加 KernelSU (${{ inputs.ksu_type }}) ==="
           
-          cd ./KernelSU
+          case "${{ inputs.ksu_type }}" in
+            sukisu)
+              echo "配置 SukiSU Ultra..."
+              curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
+              cd KernelSU
+              
+              GIT_HASH=$(git rev-parse --short=8 HEAD)
+              KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 0) + 37185)
+              
+              # 获取 API 版本
+              for i in {1..3}; do
+                KSU_API=$(curl -s "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/susfs-main/kernel/Makefile" | \
+                  grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]')
+                [ -n "$KSU_API" ] && break || sleep 1
+              done
+              [ -z "$KSU_API" ] && KSU_API="3.1.7"
+              
+              # 写入版本信息
+              echo "" >> kernel/Makefile
+              echo "# KSU Version Info" >> kernel/Makefile
+              echo "KSU_VERSION_API := $KSU_API" >> kernel/Makefile
+              echo "KSU_VERSION_FULL := v$KSU_API-$GIT_HASH@amuae" >> kernel/Makefile
+              echo "ccflags-y += -DKSU_VERSION=$KSU_VERSION" >> kernel/Makefile
+              echo "SukiSU 版本: v$KSU_API-$GIT_HASH ($KSU_VERSION)"
+              ;;
+              
+            ksunext)
+              echo "配置 KernelSU Next..."
+              curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s next-susfs
+              cd KernelSU-Next
+              KSU_VERSION=$(expr $(curl -sI "https://api.github.com/repos/pershoot/KernelSU-Next/commits?sha=next&per_page=1" | \
+                grep -i "link:" | sed -n 's/.*page=\([0-9]*\)>; rel="last".*/\1/p') + 10200)
+              sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
+              ;;
+              
+            mksu)
+              echo "配置 MKSU (5ec1cff)..."
+              curl -LSs "https://raw.githubusercontent.com/5ec1cff/KernelSU/main/kernel/setup.sh" | bash -s main
+              cd KernelSU
+              KSU_VERSION=$(expr $(curl -sI "https://api.github.com/repos/5ec1cff/KernelSU/commits?sha=main&per_page=1" | \
+                grep -i "link:" | sed -n 's/.*page=\([0-9]*\)>; rel="last".*/\1/p') + 30000)
+              sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" kernel/Kbuild
+              ;;
+              
+            ksu)
+              echo "配置原版 KernelSU..."
+              curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+              cd KernelSU
+              KSU_VERSION=$(expr $(curl -sI "https://api.github.com/repos/tiann/KernelSU/commits?sha=main&per_page=1" | \
+                grep -i "link:" | sed -n 's/.*page=\([0-9]*\)>; rel="last".*/\1/p') + 30000)
+              sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" kernel/Kbuild
+              ;;
+          esac
           
-          GIT_COMMIT_HASH=$(git rev-parse --short=8 HEAD)
-          echo "Current commit hash: $GIT_COMMIT_HASH"
-          
-          # Calculate KSU version number first
-          KSU_VERSION=$(git rev-list --count main 2>/dev/null || echo 0)
-          if [ "$KSU_VERSION" != "0" ]; then
-            KSU_VERSION=$((KSU_VERSION + 37185))
-          else
-            KSU_VERSION=114514
-          fi
-          echo "[OK] KSU version number: $KSU_VERSION"
-          
-          # Get API version
-          KSU_API_VERSION=""
-          for i in {1..3}; do
-            KSU_API_VERSION=$(curl -s "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/susfs-main/kernel/Makefile" | \
-              grep -m1 "KSU_VERSION_API :=" | \
-              awk -F'= ' '{print $2}' | \
-              tr -d '[:space:]' || echo "")
-            if [ -n "$KSU_API_VERSION" ]; then
-              break
-            fi
-            sleep 1
-          done
-          
-          if [ -z "$KSU_API_VERSION" ]; then
-            KSU_API_VERSION="3.1.7"
-            echo "[WARN] Cannot fetch remote API version, using default: $KSU_API_VERSION"
-          else
-            echo "[OK] KSU API version: $KSU_API_VERSION"
-          fi
-          
-          # Clean up old version definitions
-          sed -i '/define get_ksu_version_full/,/endef/d' kernel/Makefile || true
-          sed -i '/KSU_VERSION :=/d' kernel/Makefile || true
-          sed -i '/KSU_VERSION_API :=/d' kernel/Makefile || true
-          sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile || true
-          sed -i '/ccflags-y += -DKSU_VERSION=/d' kernel/Makefile || true
-          sed -i '/ccflags-y += -DKSU_VERSION_FULL=/d' kernel/Makefile || true
-          
-          # Write version information to Makefile
-          echo "" >> kernel/Makefile
-          echo "KSU_VERSION := ${KSU_VERSION}" >> kernel/Makefile
-          echo "KSU_VERSION_API := ${KSU_API_VERSION}" >> kernel/Makefile
-          echo "" >> kernel/Makefile
-          echo "define get_ksu_version_full" >> kernel/Makefile
-          echo "v\$(KSU_VERSION_API)-${GIT_COMMIT_HASH}@main_test" >> kernel/Makefile
-          echo "endef" >> kernel/Makefile
-          echo "" >> kernel/Makefile
-          echo "KSU_VERSION_FULL := \$(call get_ksu_version_full)" >> kernel/Makefile
-          echo "" >> kernel/Makefile
-          echo "ccflags-y += -DKSU_VERSION=\$(KSU_VERSION)" >> kernel/Makefile
-          echo "ccflags-y += -DKSU_VERSION_FULL=\\\"\$(KSU_VERSION_FULL)\\\"" >> kernel/Makefile
-          
-          echo "[OK] SukiSU version: v${KSU_API_VERSION}-${GIT_COMMIT_HASH}@main_test"
-          echo "[OK] Makefile updated with version information"
-          
-          cd ..
-      
+          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+          echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
+
+      # ==================== 应用 SUSFS 补丁 ====================
       - name: 应用 SUSFS 补丁
+        if: inputs.susfs_enable
+        working-directory: ${{ env.KERNEL_ROOT }}
         run: |
           echo "=== 应用 SUSFS 补丁 ==="
-          cd "${{ env.SOURCE_DIR }}"
           
-          git clone https://github.com/ShirkNeko/susfs4ksu.git -b gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}
-          git clone https://github.com/ShirkNeko/SukiSU_patch.git
-          
-          cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch ./common/
-          cp -r ./susfs4ksu/kernel_patches/fs/* ./common/fs/
-          cp -r ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
-          
-          cd common
-          patch -p1 --fuzz=3 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
-          
-          # 应用 hook 补丁（manual 模式 SukiSU 已内置，无需额外补丁）
-          if [ "${{ inputs.hook_method }}" == "manual" ]; then
-            echo "[INFO] Manual hook mode: SukiSU 已内置 hooks，无需应用补丁"
-          elif [ "${{ inputs.hook_method }}" == "syscall" ]; then
-            echo "[INFO] Applying syscall hooks patch..."
-            cp ../SukiSU_patch/hooks/syscall_hooks.patch ./
-            patch -p1 -F 3 < syscall_hooks.patch || true
-          fi
-          
-          cp ../SukiSU_patch/69_hide_stuff.patch ./
-          patch -p1 -F 3 < 69_hide_stuff.patch || true
-          
-          cd ..
-      
-      - name: 克隆性能补丁仓库
+          case "${{ inputs.ksu_type }}" in
+            sukisu)
+              git clone https://github.com/ShirkNeko/susfs4ksu.git -b gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}
+              git clone https://github.com/ShirkNeko/SukiSU_patch.git
+              
+              cp susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch common/
+              cp susfs4ksu/kernel_patches/fs/* common/fs/
+              cp susfs4ksu/kernel_patches/include/linux/* common/include/linux/
+              cp SukiSU_patch/69_hide_stuff.patch common/
+              
+              cd common
+              patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
+              patch -p1 < 69_hide_stuff.patch || true
+              ;;
+              
+            ksunext)
+              git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}
+              cd susfs4ksu && git checkout a162e2469d0b472545e5e46457eee171c0975fb0 && cd ..
+              git clone https://github.com/WildKernels/kernel_patches.git
+              
+              cp susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch common/
+              cp susfs4ksu/kernel_patches/fs/* common/fs/
+              cp susfs4ksu/kernel_patches/include/linux/* common/include/linux/
+              cp kernel_patches/next/scope_min_manual_hooks_v1.5.patch common/
+              cp kernel_patches/69_hide_stuff.patch common/
+              
+              cd common
+              patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
+              patch -p1 -N -F 3 < scope_min_manual_hooks_v1.5.patch || true
+              patch -p1 -N -F 3 < 69_hide_stuff.patch || true
+              
+              # 添加 WildKSU 管理器支持
+              cd drivers/kernelsu
+              wget -q https://github.com/WildKernels/kernel_patches/raw/main/next/susfs_fix_patches/v1.5.12/fix_apk_sign.c.patch
+              patch -p2 -N -F 3 < fix_apk_sign.c.patch || true
+              ;;
+              
+            mksu|ksu)
+              git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}
+              git clone https://github.com/ShirkNeko/SukiSU_patch.git
+              
+              cp susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch KernelSU/
+              cp susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch common/
+              cp susfs4ksu/kernel_patches/fs/* common/fs/
+              cp susfs4ksu/kernel_patches/include/linux/* common/include/linux/
+              cp SukiSU_patch/69_hide_stuff.patch common/
+              
+              cd KernelSU
+              patch -p1 < 10_enable_susfs_for_ksu.patch || true
+              
+              if [ "${{ inputs.ksu_type }}" == "mksu" ]; then
+                wget -q https://github.com/cctv18/oppo_oplus_realme_sm8650/raw/main/other_patch/mksu_supercalls.patch
+                patch -p1 < mksu_supercalls.patch || true
+              fi
+              wget -q https://github.com/cctv18/oppo_oplus_realme_sm8650/raw/main/other_patch/fix_umount.patch
+              patch -p1 < fix_umount.patch || true
+              
+              cd ../common
+              patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
+              patch -p1 -N -F 3 < 69_hide_stuff.patch || true
+              ;;
+          esac
+
+      # ==================== 应用性能补丁 ====================
+      - name: 克隆补丁仓库
         run: |
-          echo "=== 克隆性能补丁仓库 ==="
-          git clone https://github.com/WildKernels/kernel_patches.git --depth=1
-          ls -la kernel_patches/common/ || echo "Failed to clone kernel_patches"
-      
+          git clone https://github.com/WildKernels/kernel_patches.git --depth=1 || true
+
       - name: 应用性能优化补丁
+        working-directory: ${{ env.KERNEL_ROOT }}/common
         run: |
           echo "=== 应用性能优化补丁 ==="
-          cd "${{ env.SOURCE_DIR }}/common"
-          MIN_VERSION="5.16"
+          PATCHES_DIR="$ROOT/kernel_patches/common"
           
-          # 1. 优化内存操作
-          cp ../../kernel_patches/common/optimized_mem_operations.patch ./
-          patch -p1 --forward < optimized_mem_operations.patch || true
-          echo "[OK] Applied optimized_mem_operations.patch"
+          # 内存优化
+          [ -f "$PATCHES_DIR/optimized_mem_operations.patch" ] && \
+            patch -p1 --forward < "$PATCHES_DIR/optimized_mem_operations.patch" || true
           
-          # 2. 文件结构体 8 字节对齐
-          cp ../../kernel_patches/common/file_struct_8bytes_align.patch ./
-          patch -p1 --forward < file_struct_8bytes_align.patch || true
-          echo "[OK] Applied file_struct_8bytes_align.patch"
+          # 文件结构对齐
+          [ -f "$PATCHES_DIR/file_struct_8bytes_align.patch" ] && \
+            patch -p1 --forward < "$PATCHES_DIR/file_struct_8bytes_align.patch" || true
           
-          # 3. 降低缓存压力
-          cp ../../kernel_patches/common/reduce_cache_pressure.patch ./
-          patch -p1 --forward < reduce_cache_pressure.patch || true
-          echo "[OK] Applied reduce_cache_pressure.patch"
+          # 缓存压力优化
+          [ -f "$PATCHES_DIR/reduce_cache_pressure.patch" ] && \
+            patch -p1 --forward < "$PATCHES_DIR/reduce_cache_pressure.patch" || true
           
-          # 4. 清除页面 16 字节对齐（内核版本检测）
-          CURRENT_VERSION="${{ inputs.kernel_version }}"
-          if [ "$(printf '%s\n' "$CURRENT_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$CURRENT_VERSION" ]; then
-            echo "Kernel $CURRENT_VERSION < $MIN_VERSION, using original patch"
-            cp ../../kernel_patches/common/clear_page_16bytes_align.patch ./
-            patch -p1 --forward < clear_page_16bytes_align.patch || true
-            echo "[OK] Applied clear_page_16bytes_align.patch"
-          else
-            echo "Kernel $CURRENT_VERSION >= $MIN_VERSION, using __pi variant"
-            cp ../../kernel_patches/common/clear_page_16bytes_align.patch ./
-            sed -e 's/SYM_FUNC_START_PI(clear_page)/SYM_FUNC_START_PI(__pi_clear_page)/' clear_page_16bytes_align.patch > clear_page_16bytes_align__pi.patch
-            patch -p1 -F3 --forward < clear_page_16bytes_align__pi.patch || true
-            echo "[OK] Applied clear_page_16bytes_align__pi.patch"
+          # 页面清除优化
+          if [ -f "$PATCHES_DIR/clear_page_16bytes_align.patch" ]; then
+            if [ "$(printf '%s\n' "${{ inputs.kernel_version }}" "5.16" | sort -V | head -n1)" = "${{ inputs.kernel_version }}" ]; then
+              patch -p1 --forward < "$PATCHES_DIR/clear_page_16bytes_align.patch" || true
+            else
+              sed -e 's/SYM_FUNC_START_PI(clear_page)/SYM_FUNC_START_PI(__pi_clear_page)/' \
+                "$PATCHES_DIR/clear_page_16bytes_align.patch" > clear_page_pi.patch
+              patch -p1 -F3 --forward < clear_page_pi.patch || true
+            fi
           fi
           
-          cd ..
-      
-      - name: 应用额外补丁
+          echo "性能优化补丁应用完成"
+
+      - name: 应用 LZ4KD 压缩补丁
+        if: env.LZ4KD_ENABLE == 'true'
+        working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          echo "=== 应用额外补丁 ==="
-          cd "${{ env.SOURCE_DIR }}/common"
-          
-          wget -q https://github.com/cctv18/oppo_oplus_realme_sm8650/raw/refs/heads/main/other_patch/config.patch || true
-          if [ -f "config.patch" ]; then
-            patch -p1 -F 3 < config.patch || true
-            echo "[OK] config.patch applied"
+          echo "=== 应用 LZ4KD 补丁 ==="
+          if [ ! -d "SukiSU_patch" ]; then
+            git clone https://github.com/ShirkNeko/SukiSU_patch.git
           fi
-          
-          cd ..
-      
-      - name: 修复 Samsung 6.6 GKI 设备 WiFi 和蓝牙
-        if: ${{ inputs.kernel_version == '6.6' }}
-        run: |
-          echo "=== 修复 Samsung 6.6 WiFi/BT ==="
-          cd "${{ env.SOURCE_DIR }}"
-          
-          # 添加 KDP 符号到 ABI 列表
-          SYMBOL_LIST="common/android/abi_gki_aarch64_galaxy"
-          echo "kdp_set_cred_non_rcu" >> "$SYMBOL_LIST"
-          echo "kdp_usecount_dec_and_test" >> "$SYMBOL_LIST"
-          echo "kdp_usecount_inc" >> "$SYMBOL_LIST"
-          echo "[OK] Added KDP symbols to $SYMBOL_LIST"
           
           cd common
-          PATCH="../../kernel_patches/samsung/min_kdp/add-min_kdp-symbols.patch"
-          if patch -p1 --dry-run < "$PATCH" 2>/dev/null; then
-            patch -p1 --no-backup-if-mismatch < "$PATCH"
-            echo "[OK] Applied min_kdp symbols patch"
-          fi
-          
-          # 添加最小 KDP 实现
-          cd drivers
-          cp "../../../kernel_patches/samsung/min_kdp/min_kdp.c" min_kdp.c
-          echo "obj-y += min_kdp.o" >> Makefile
-          echo "[OK] Added min_kdp driver for Samsung devices"
-          
-          cd ../..
-      
-      - name: 添加 Baseband-guard 支持
-        if: ${{ inputs.enable_bbg }}
+          cp -r ../SukiSU_patch/other/zram/lz4k/include/linux/* ./include/linux/
+          cp -r ../SukiSU_patch/other/zram/lz4k/lib/* ./lib/
+          cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./crypto/
+          cp ../SukiSU_patch/other/zram/zram_patch/${{ inputs.kernel_version }}/lz4kd.patch ./
+          patch -p1 -F 3 < lz4kd.patch || true
+
+      # ==================== 添加内核功能 ====================
+      - name: 添加 BBG 基带保护
+        if: env.BBG_ENABLE == 'true'
+        working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          echo "更改为配置目录: ${{ env.SOURCE_DIR }}/common..."
-          cd "${{ env.SOURCE_DIR }}/common"
+          echo "=== 添加 BBG 基带保护 ==="
+          echo "CONFIG_BBG=y" >> "${{ env.DEFCONFIG }}"
           
-          # 手动执行BBG集成步骤，避免setup.sh末尾的awk错误
-          echo "克隆 Baseband-guard 仓库..."
-          git clone https://github.com/vc-teahouse/Baseband-guard.git
+          cd common/security
+          wget -q https://github.com/cctv18/Baseband-guard/archive/refs/heads/master.zip
+          unzip -q master.zip
+          mv Baseband-guard-master baseband-guard
           
-          echo "创建符号链接..."
-          ln -sf Baseband-guard bbg
+          echo 'obj-$(CONFIG_BBG) += baseband-guard/' >> Makefile
+          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' Kconfig
           
-          echo "更新 Makefile..."
-          echo "obj-\$(CONFIG_BBG) += bbg/" >> Makefile
+          awk '
+          /endmenu/ { last_endmenu_line = NR }
+          { lines[NR] = $0 }
+          END {
+            for (i=1; i<=NR; i++) {
+              if (i == last_endmenu_line) {
+                sub(/endmenu/, "", lines[i]);
+                print lines[i] "source \"security/baseband-guard/Kconfig\""
+                print ""
+                print "endmenu"
+              } else {
+                print lines[i]
+              }
+            }
+          }' Kconfig > Kconfig.tmp && mv Kconfig.tmp Kconfig
           
-          echo "更新 Kconfig..."
-          sed -i '/source "security\/Kconfig"/a source "bbg/Kconfig"' Kconfig
-          
-          echo "保留BBG原始Makefile（包含SELinux补丁）..."
-          
-          echo "启用 Baseband-guard 内核配置..."
-          CONFIG_FILE="arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_BBG=y" >> "$CONFIG_FILE"
-          
-          # 对于 GitHub Actions 云编译，修改 LSM Kconfig
-          echo "修改 security/Kconfig 以包含 baseband_guard..."
-          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' ./security/Kconfig
-          
-          echo "Baseband-guard 配置完成"
-      
-      - name: 配置内核
+          sed -i 's/selinuxfs.o //g' selinux/Makefile
+          sed -i 's/hooks.o //g' selinux/Makefile
+          cat baseband-guard/sepatch.txt >> selinux/Makefile
+
+      - name: 添加 Re-Kernel 支持
+        if: env.REKERNEL_ENABLE == 'true'
+        working-directory: ${{ env.KERNEL_ROOT }}/common
         run: |
-          echo "=== 配置内核 ==="
-          cd "${{ env.SOURCE_DIR }}"
+          echo "=== 添加 Re-Kernel 支持 ==="
+          echo "CONFIG_RE_KERNEL=y" >> "${{ env.DEFCONFIG }}"
           
-          DEFCONFIG="./common/arch/arm64/configs/gki_defconfig"
+          curl -LSs "https://raw.githubusercontent.com/AuroraNova6/ReKernel/main/kernel/re_kernel.c" -o kernel/re_kernel.c
+          echo "obj-\$(CONFIG_RE_KERNEL) += re_kernel.o" >> kernel/Makefile
           
-          sed -i 's/check_defconfig//' ./common/build.config.gki
+          # 添加 Kconfig
+          echo "" >> kernel/Kconfig
+          echo "config RE_KERNEL" >> kernel/Kconfig
+          echo "    bool \"Re-Kernel support for enhanced app freezing\"" >> kernel/Kconfig
+          echo "    default n" >> kernel/Kconfig
+          echo "    help" >> kernel/Kconfig
+          echo "      Enable Re-Kernel support for enhanced application freezing capabilities." >> kernel/Kconfig
+
+      # ==================== 配置内核 ====================
+      - name: 配置内核选项
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          echo "=== 配置内核选项 ==="
+          DEFCONFIG="${{ env.DEFCONFIG }}"
           
-          echo "Adding kernel configurations..."
-          
-          # KernelSU Configuration
+          # KernelSU 配置
           echo "" >> "$DEFCONFIG"
           echo "# KernelSU Configuration" >> "$DEFCONFIG"
           echo "CONFIG_KSU=y" >> "$DEFCONFIG"
-          # SukiSU 使用 manual hook 时不需要额外配置（已内置）
-          # syscall/kprobes 需要明确设置 CONFIG_KSU_SUSFS_SUS_SU
-          if [ "${{ inputs.hook_method }}" != "manual" ]; then
-            echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> "$DEFCONFIG"
-            if [ "${{ inputs.hook_method }}" == "kprobes" ]; then
-              echo "CONFIG_KSU_KPROBES_HOOK=y" >> "$DEFCONFIG"
-            fi
+          
+          # KPM 支持 (仅 SukiSU)
+          if [[ "${{ inputs.kpm_enable }}" == "true" && "${{ inputs.ksu_type }}" == "sukisu" ]]; then
+            echo "CONFIG_KPM=y" >> "$DEFCONFIG"
           fi
           
-          # Mountify Support
+          # SUSFS 配置
+          if [ "${{ inputs.susfs_enable }}" == "true" ]; then
+            echo "" >> "$DEFCONFIG"
+            echo "# SUSFS Configuration" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_SUSFS=y" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$DEFCONFIG"
+            echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> "$DEFCONFIG"
+          fi
+          
+          # Mountify 支持
           echo "" >> "$DEFCONFIG"
           echo "# Mountify Support" >> "$DEFCONFIG"
           echo "CONFIG_TMPFS_XATTR=y" >> "$DEFCONFIG"
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> "$DEFCONFIG"
           
-          # Networking Configuration
+          # 网络配置
           echo "" >> "$DEFCONFIG"
-          echo "# Networking Configuration" >> "$DEFCONFIG"
+          echo "# Networking" >> "$DEFCONFIG"
           echo "CONFIG_IP_NF_TARGET_TTL=y" >> "$DEFCONFIG"
           echo "CONFIG_IP6_NF_TARGET_HL=y" >> "$DEFCONFIG"
           echo "CONFIG_IP6_NF_MATCH_HL=y" >> "$DEFCONFIG"
           
-          # Wireguard Support (built-in to avoid module_outs complexity)
-          echo "" >> "$DEFCONFIG"
-          echo "# Wireguard VPN Support" >> "$DEFCONFIG"
-          echo "CONFIG_WIREGUARD=y" >> "$DEFCONFIG"
-          echo "CONFIG_WIREGUARD_DEBUG=n" >> "$DEFCONFIG"
+          # Wireguard
+          if [ "${{ env.WIREGUARD_ENABLE }}" == "true" ]; then
+            echo "" >> "$DEFCONFIG"
+            echo "# Wireguard VPN" >> "$DEFCONFIG"
+            echo "CONFIG_WIREGUARD=y" >> "$DEFCONFIG"
+          fi
           
-          # IPSet Support (optional)
-          if [ "${{ inputs.enable_ipset }}" = "true" ]; then
+          # IPSet 支持
+          if [ "${{ env.IPSET_ENABLE }}" == "true" ]; then
             echo "" >> "$DEFCONFIG"
             echo "# IPSet Support" >> "$DEFCONFIG"
             echo "CONFIG_IP_SET=y" >> "$DEFCONFIG"
@@ -425,225 +659,147 @@ jobs:
             echo "CONFIG_IP_SET_HASH_NETPORT=y" >> "$DEFCONFIG"
             echo "CONFIG_IP_SET_HASH_NETIFACE=y" >> "$DEFCONFIG"
             echo "CONFIG_IP_SET_LIST_SET=y" >> "$DEFCONFIG"
+            echo "CONFIG_IP6_NF_NAT=y" >> "$DEFCONFIG"
+            echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y" >> "$DEFCONFIG"
           fi
           
-          # SUSFS Configuration
-          echo "" >> "$DEFCONFIG"
-          echo "# SUSFS Configuration" >> "$DEFCONFIG"
-          echo "CONFIG_KSU_SUSFS=y" >> "$DEFCONFIG"
-          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> "$DEFCONFIG"
-          
-          # SUS_PATH: 6.6 kernel needs to disable this
-          if [ "${{ inputs.kernel_version }}" != "6.6" ]; then
-            echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$DEFCONFIG"
-          else
-            echo "CONFIG_KSU_SUSFS_SUS_PATH=n" >> "$DEFCONFIG"
+          # LZ4KD 配置
+          if [ "${{ env.LZ4KD_ENABLE }}" == "true" ]; then
+            echo "" >> "$DEFCONFIG"
+            echo "# LZ4KD Compression" >> "$DEFCONFIG"
+            echo "CONFIG_ZSMALLOC=y" >> "$DEFCONFIG"
+            echo "CONFIG_CRYPTO_LZ4HC=y" >> "$DEFCONFIG"
+            echo "CONFIG_CRYPTO_LZ4K=y" >> "$DEFCONFIG"
+            echo "CONFIG_CRYPTO_LZ4KD=y" >> "$DEFCONFIG"
+            echo "CONFIG_CRYPTO_842=y" >> "$DEFCONFIG"
           fi
           
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$DEFCONFIG"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> "$DEFCONFIG"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> "$DEFCONFIG"
-          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$DEFCONFIG"
-          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> "$DEFCONFIG"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> "$DEFCONFIG"
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$DEFCONFIG"
-          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$DEFCONFIG"
-          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> "$DEFCONFIG"
-          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$DEFCONFIG"
-          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$DEFCONFIG"
-          echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> "$DEFCONFIG"
-          
-          # Sound Configuration
-          echo "" >> "$DEFCONFIG"
-          echo "# Sound Configuration" >> "$DEFCONFIG"
-          echo "CONFIG_SND=y" >> "$DEFCONFIG"
-          echo "CONFIG_SND_DRIVERS=y" >> "$DEFCONFIG"
-          echo "CONFIG_SND_PCM=y" >> "$DEFCONFIG"
-          echo "CONFIG_SND_TIMER=y" >> "$DEFCONFIG"
-          echo "CONFIG_SND_DYNAMIC_MINORS=y" >> "$DEFCONFIG"
-          echo "CONFIG_SND_PROC_FS=y" >> "$DEFCONFIG"
-          echo "CONFIG_SND_ALOOP=m" >> "$DEFCONFIG"
-          
-          # LTO Optimization (always enabled)
+          # 编译优化
           echo "" >> "$DEFCONFIG"
           echo "# Build Optimization" >> "$DEFCONFIG"
-          echo "CONFIG_LTO_CLANG_THIN=y" >> "$DEFCONFIG"
-          echo "CONFIG_LTO_CLANG=y" >> "$DEFCONFIG"
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "$DEFCONFIG"
-          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> "$DEFCONFIG"
-          echo "CONFIG_OPTIMIZE_INLINING=y" >> "$DEFCONFIG"
+          echo "CONFIG_HEADERS_INSTALL=n" >> "$DEFCONFIG"
           
-          echo "Configuration complete!"
+          # 禁用 defconfig 检查
+          sed -i 's/check_defconfig//' common/build.config.gki || true
           
-          # Add snd-aloop to modules list
-          echo "sound/drivers/snd-aloop.ko" >> common/android/gki_aarch64_modules
-          
-          if [[ -f common/modules.bzl ]]; then
-            if [[ "${{ inputs.android_version }}" == "android14" ]] && [[ "${{ inputs.kernel_version }}" == "6.1" ]] && (( ${{ env.SUBLEVEL }} <= 25 )) && [[ "${{ inputs.os_patch_level }}" != "2023-09" ]]; then
-              sed -i '/COMMON_GKI_MODULES_LIST = \[/,/^[[:space:]]*\]/{/^[[:space:]]*\]$/i\    "sound/drivers/snd-aloop.ko",
-              }' common/modules.bzl
-            else
-              sed -i '/_COMMON_GKI_MODULES_LIST = \[/,/^[[:space:]]*\]/{/^[[:space:]]*\]$/i\    "sound/drivers/snd-aloop.ko",
-              }' common/modules.bzl
-            fi
-          fi
-          
-          # ABI bypass
-          perl -i -pe 's/^(\s*)return 1$/$1print("Who Cares? Bypassing Now!")\n$1return 0/g if /if missing_symbols:/../return 1/' build/kernel/abi/check_buildtime_symbol_protection.py
-          
-          # Module check bypass (optional)
-          if [ "${{ inputs.module_bypass }}" = "true" ]; then
-            if [[ "${{ inputs.kernel_version }}" == "6.1" ]] || [[ "${{ inputs.kernel_version }}" == "6.6" ]]; then
-              TARGET_FILE="common/kernel/module/version.c"
-            else
-              TARGET_FILE="common/kernel/module.c"
-            fi
-            
-            if [ -f "$TARGET_FILE" ]; then
-              sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' "$TARGET_FILE"
-              echo "[OK] Module check bypass applied"
-            fi
-          fi
-      
-      - name: 修改内核版本
+          echo "内核配置完成"
+
+      - name: 修改内核名称
+        working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          echo "=== 修改内核版本 ==="
-          cd "${{ env.SOURCE_DIR }}"
+          SUFFIX="${{ inputs.kernel_suffix }}"
+          if [ -z "$SUFFIX" ]; then
+            SUFFIX="${{ inputs.android_version }}-${{ inputs.ksu_type }}"
+          fi
           
-          sed -i "\$s|echo \"\\\$res\"|echo \"\\\$res-${{ inputs.kernel_name }}\"|" ./common/scripts/setlocalversion
-          
-          BUILD_TIMESTAMP=$(date -u -d "${{ inputs.build_time }}" +%s 2>/dev/null || echo "1749492000")
-          echo "Build timestamp (epoch): $BUILD_TIMESTAMP"
-          
-          sed -i "s/export SOURCE_DATE_EPOCH=0/export SOURCE_DATE_EPOCH=$BUILD_TIMESTAMP/" ./build/kernel/kleaf/impl/stamp.bzl
-          sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl
-          
-          rm -rf ./common/android/abi_gki_protected_exports_*
-          perl -pi -e 's/^\s*"protected_exports_list"\s*:\s*"android\/abi_gki_protected_exports_aarch64",\s*$//;' ./common/BUILD.bazel
-      
+          sed -i "\$s|echo \"\\\$res\"|echo \"-$SUFFIX\"|" common/scripts/setlocalversion
+          echo "内核后缀: -$SUFFIX"
+
+      # ==================== 构建内核 ====================
       - name: 构建内核
+        working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          echo "=== 构建内核 ==="
-          cd "${{ env.SOURCE_DIR }}"
+          echo "=== 开始构建内核 ==="
           
-          echo "预计耗时 30-60 分钟..."
-          echo "开始时间: $(date)"
+          # 配置 ccache
+          export PATH="/usr/lib/ccache:$PATH"
+          export CCACHE_DIR="${{ env.CCACHE_DIR }}"
+          export CCACHE_COMPILERCHECK="none"
+          export CCACHE_BASEDIR="${{ github.workspace }}"
+          export CCACHE_NOHASHDIR="true"
+          export CCACHE_HARDLINK="true"
           
-          tools/bazel build --config=fast --lto=thin //common:kernel_aarch64_dist
+          # 构建
+          if [ -f "build/build.sh" ]; then
+            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+          else
+            tools/bazel build --config=fast --config=stamp --lto=thin //common:kernel_aarch64_dist
+          fi
           
-          echo "完成时间: $(date)"
-      
+          echo "内核构建完成"
+          ccache -s
+
+      # ==================== 打包 ====================
+      - name: 克隆 AnyKernel3
+        run: |
+          git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0
+
       - name: 打包内核
         run: |
           echo "=== 打包内核 ==="
-          cd "${{ env.SOURCE_DIR }}"
           
-          BAZEL_BIN="bazel-bin/common/kernel_aarch64"
-          IMAGE_FILE="${BAZEL_BIN}/Image"
-          
-          if [ ! -f "$IMAGE_FILE" ]; then
-            echo "Error: Kernel Image not found!"
+          # 查找 Image 文件
+          if [ -f "$KERNEL_ROOT/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image" ]; then
+            IMAGE_PATH="$KERNEL_ROOT/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image"
+          elif [ -f "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" ]; then
+            IMAGE_PATH="$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image"
+          else
+            echo "错误: 找不到 Image 文件"
+            find $KERNEL_ROOT -name "Image" -type f 2>/dev/null || true
             exit 1
           fi
           
-          # Get kernel release version
-          KERNEL_RELEASE=$(cat ${BAZEL_BIN}/include/config/kernel.release | tr '+' '_')
+          cp "$IMAGE_PATH" AnyKernel3/Image
           
-          # Clone AnyKernel3 if not exists
-          if [ ! -d "$GITHUB_WORKSPACE/AnyKernel3" ]; then
-            cd "$GITHUB_WORKSPACE"
-            git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0
-            cd "${{ env.SOURCE_DIR }}"
+          # 创建 ZIP
+          cd AnyKernel3
+          ZIP_NAME="${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-${{ inputs.android_version }}-${{ inputs.ksu_type }}.zip"
+          zip -r9 "../$ZIP_NAME" * -x .git .gitignore README.md
+          
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+          echo "打包完成: $ZIP_NAME"
+
+      - name: 生成 boot.img
+        run: |
+          echo "=== 生成 boot.img ==="
+          mkdir -p bootimgs
+          
+          if [ -f "$KERNEL_ROOT/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image" ]; then
+            cp "$KERNEL_ROOT/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image" bootimgs/
+            cp "$KERNEL_ROOT/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image.lz4" bootimgs/ 2>/dev/null || true
+          else
+            cp "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" bootimgs/
+            cp "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image.lz4" bootimgs/ 2>/dev/null || true
           fi
           
-          # Copy kernel to AnyKernel3 and package
-          cp "$IMAGE_FILE" "$GITHUB_WORKSPACE/AnyKernel3/Image"
-          cd "$GITHUB_WORKSPACE/AnyKernel3"
+          cd bootimgs
+          gzip -n -k -f -9 Image > Image.gz 2>/dev/null || gzip -n -f -9 -c Image > Image.gz
           
-          ZIP_NAME="AnyKernel3-${KERNEL_RELEASE}.zip"
-          zip -r9 "${ZIP_NAME}" * -x .git README.md placeholder
-          echo "✓ AnyKernel3 package created: ${ZIP_NAME}"
+          # 创建 boot.img
+          $MKBOOTIMG --header_version 4 --kernel Image --output boot.img
+          $AVBTOOL add_hash_footer --partition_name boot --partition_size $((64 * 1024 * 1024)) \
+            --image boot.img --algorithm SHA256_RSA2048 --key $BOOT_SIGN_KEY_PATH
           
-          # Set environment variables
-          echo "KERNEL_RELEASE=${KERNEL_RELEASE}" >> $GITHUB_ENV
-          echo "ZIP_FILE=${ZIP_NAME}" >> $GITHUB_ENV
-          
-          # Generate artifact name
-          ARTIFACT_NAME="${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-${{ inputs.os_patch_level }}"
-          echo "ARTIFACT_NAME=${ARTIFACT_NAME}" >> $GITHUB_ENV
-          
-          # List file for verification
-          echo "=== AnyKernel3 package ==="
-          ls -lh "${ZIP_NAME}"
-      
+          BOOT_NAME="${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-${{ inputs.android_version }}-${{ inputs.ksu_type }}-boot.img"
+          cp boot.img "../$BOOT_NAME"
+          echo "BOOT_NAME=$BOOT_NAME" >> $GITHUB_ENV
+
+      # ==================== 上传 ====================
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ARTIFACT_NAME }}-kernel
-          path: AnyKernel3/${{ env.ZIP_FILE }}
+          name: ${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.ksu_type }}-kernel
+          path: |
+            ${{ env.ZIP_NAME }}
+            ${{ env.BOOT_NAME }}
           compression-level: 0
-          if-no-files-found: error
-      
-      - name: 上传到 Telegram
-        if: ${{ success() }}
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-            echo "⚠️ Telegram credentials not configured, skipping upload"
-            exit 0
-          fi
-          
-          cd "$GITHUB_WORKSPACE"
-          
-          # Build information caption
-          CAPTION="🎉 内核构建完成
-          
-          📦 构建信息:
-          ├ Android: ${{ inputs.android_version }}
-          ├ 内核: ${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}
-          ├ 补丁: ${{ inputs.os_patch_level }}
-          ├ Hook: ${{ inputs.hook_method }}
-          ├ BBG: ${{ inputs.enable_bbg }}
-          ├ 模块绕过: ${{ inputs.module_bypass }}
-          └ 版本: ${{ env.KERNEL_RELEASE }}
-          
-          🔗 https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          
-          # Upload AnyKernel3 package with description
-          echo "📦 上传 AnyKernel3 包..."
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
-            -F "chat_id=${TELEGRAM_CHAT_ID}" \
-            -F "document=@AnyKernel3/${{ env.ZIP_FILE }}" \
-            -F "caption=${CAPTION}" > /dev/null
-          
-          echo "✅ 文件已上传到 Telegram"
-      
-      - name: 创建发布
-        if: ${{ inputs.create_release }}
-        uses: softprops/action-gh-release@v1
+
+      - name: 创建 Release
+        if: inputs.create_release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.os_patch_level }}-${{ github.run_number }}
+          tag_name: v${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-${{ github.run_number }}
           name: "GKI ${{ inputs.android_version }} 内核 ${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}"
           body: |
-            ## GKI 内核 with SukiSU + SUSFS
-            
-            **构建信息:**
-            - Android 版本: ${{ inputs.android_version }}
-            - 内核版本: ${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}
-            - 安全补丁: ${{ inputs.os_patch_level }}
-            - Hook 方法: ${{ inputs.hook_method }}
-            - 模块绕过: ${{ inputs.module_bypass }}
-            - BBG 保护: ${{ inputs.enable_bbg }}
-            - IPSet 支持: ${{ inputs.enable_ipset }}
-            
-            **安装方式:**
-            1. 在 Recovery (TWRP/OrangeFox) 中刷入 AnyKernel3 ZIP
-            2. 从 https://github.com/ShirkNeko/SukiSU-Ultra 安装 SukiSU Manager
-            3. 重启并验证
+            ## 构建信息
+            - **Android 版本**: ${{ inputs.android_version }}
+            - **内核版本**: ${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}
+            - **KernelSU**: ${{ inputs.ksu_type }} (v${{ env.KSUVER }})
+            - **SUSFS**: ${{ inputs.susfs_enable }}
+            - **额外功能**: ${{ inputs.features }}
+          files: |
+            ${{ env.ZIP_NAME }}
+            ${{ env.BOOT_NAME }}
           draft: false
           prerelease: false
-          files: AnyKernel3/${{ env.ZIP_FILE }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
