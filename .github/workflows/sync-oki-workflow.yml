@@ -2,9 +2,10 @@ name: 同步 OKI 工作流
 
 on:
   workflow_dispatch:
-  schedule:
-    # 每天 UTC 0:00 (北京时间 8:00) 检查更新
-    - cron: '0 0 * * *'
+  # 注意：自动同步已禁用，因为需要手动设置 PAT_TOKEN
+  # 如需启用自动同步，请取消下面的注释并配置 PAT_TOKEN
+  # schedule:
+  #   - cron: '0 0 * * *'
 
 env:
   # 源工作流 URL
@@ -26,7 +27,10 @@ jobs:
       - name: 检出仓库
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # 需要使用 PAT 才能修改 workflow 文件
+          # 请在仓库 Settings -> Secrets 中添加 PAT_TOKEN
+          # PAT 需要 repo 和 workflow 权限
+          token: ${{ secrets.PAT_TOKEN }}
 
       - name: 下载最新工作流
         run: |
