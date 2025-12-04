@@ -59,9 +59,14 @@ on:
         default: 'ipset,bbg,wireguard'
         type: string
       kernel_suffix:
-        description: '内核后缀 (留空使用默认)'
+        description: '内核名称后缀 (格式: android14-11-gca0ef6d17716-ab13624819)'
         required: false
-        default: ''
+        default: 'android14-11-gca0ef6d17716-ab13624819'
+        type: string
+      build_time:
+        description: '构建时间'
+        required: false
+        default: 'Tue Jun 10 18:59:08 UTC 2025'
         type: string
       create_release:
         description: '创建 Release'
@@ -281,12 +286,31 @@ jobs:
           sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" build/kernel/kleaf/impl/stamp.bzl || true
           sed -i 's/ -dirty//g' common/scripts/setlocalversion || true
 
+      - name: 修改内核版本信息
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          echo "=== 修改内核版本信息 ==="
+          
+          # 设置内核名称后缀: 6.1.118-android14-11-gca0ef6d17716-ab13624819
+          # 使用覆盖方式 (与 cctv18 一致)
+          echo "内核后缀: -${{ inputs.kernel_suffix }}"
+          sed -i "\$s|echo \"\\\$res\"|echo \"-${{ inputs.kernel_suffix }}\"|" ./common/scripts/setlocalversion
+          
+          # 设置构建时间
+          BUILD_TIMESTAMP=$(date -u -d "${{ inputs.build_time }}" +%s 2>/dev/null || echo "1749578348")
+          echo "构建时间: ${{ inputs.build_time }} (epoch: $BUILD_TIMESTAMP)"
+          
+          # 设置 SOURCE_DATE_EPOCH (用于可重复构建)
+          if [ -f "./build/kernel/kleaf/impl/stamp.bzl" ]; then
+            sed -i "s/SOURCE_DATE_EPOCH=0/SOURCE_DATE_EPOCH=$BUILD_TIMESTAMP/" ./build/kernel/kleaf/impl/stamp.bzl || true
+          fi
+
       # ==================== 添加 KernelSU ====================
       - name: 添加 KernelSU
         id: ksu_version
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          echo "=== 添加 KernelSU (${{ inputs.ksu_type }}) ==="
+          echo "=== 添加 KernelSU (${{ inputs.ksu_type }}) ===="
           
           case "${{ inputs.ksu_type }}" in
             sukisu)
@@ -626,17 +650,6 @@ jobs:
           sed -i 's/check_defconfig//' common/build.config.gki || true
           
           echo "内核配置完成"
-
-      - name: 修改内核名称
-        working-directory: ${{ env.KERNEL_ROOT }}
-        run: |
-          SUFFIX="${{ inputs.kernel_suffix }}"
-          if [ -z "$SUFFIX" ]; then
-            SUFFIX="${{ inputs.android_version }}-${{ inputs.ksu_type }}"
-          fi
-          
-          sed -i "\$s|echo \"\\\$res\"|echo \"-$SUFFIX\"|" common/scripts/setlocalversion
-          echo "内核后缀: -$SUFFIX"
 
       # ==================== 构建内核 ====================
       - name: 构建内核
