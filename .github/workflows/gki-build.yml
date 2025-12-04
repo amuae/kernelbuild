@@ -768,7 +768,11 @@ jobs:
           fi
           
           # KPM 状态文本
-          KPM_STATUS="${{ env.KPM_ENABLE == 'true' && '✅ 启用' || '❌ 禁用' }}"
+          if [[ "${{ env.KPM_ENABLE }}" == "true" ]]; then
+            KPM_STATUS="✅ 启用"
+          else
+            KPM_STATUS="❌ 禁用"
+          fi
           
           # 构建信息 (使用 heredoc 避免缩进问题)
           BUILD_INFO=$(cat << EOF
@@ -785,8 +789,16 @@ jobs:
           )
 
           # 发送 AnyKernel3 包
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
-            -F chat_id="${TELEGRAM_CHAT_ID}" \
-            -F document=@"${{ env.ZIP_NAME }}" \
-            -F caption="${BUILD_INFO}" \
-            -F parse_mode="Markdown"
+          if [ -f "${{ env.ZIP_NAME }}" ]; then
+            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+              -F chat_id="${TELEGRAM_CHAT_ID}" \
+              -F document=@"${{ env.ZIP_NAME }}" \
+              -F caption="${BUILD_INFO}" \
+              -F parse_mode="Markdown"
+          else
+            # 如果没有找到文件，只发送消息
+            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -d chat_id="${TELEGRAM_CHAT_ID}" \
+              -d text="${BUILD_INFO}" \
+              -d parse_mode="Markdown"
+          fi
