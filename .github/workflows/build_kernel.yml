@@ -59,9 +59,9 @@ on:
         default: 'ipset,bbg,wireguard'
         type: string
       kernel_suffix:
-        description: '内核名称后缀 (格式: android14-11-gca0ef6d17716-ab13624819)'
+        description: '内核名称后缀 (如: gca0ef6d17716-ab13624819)'
         required: false
-        default: 'android14-11-gca0ef6d17716-ab13624819'
+        default: 'gca0ef6d17716-ab13624819'
         type: string
       build_time:
         description: '构建时间'
@@ -291,10 +291,13 @@ jobs:
         run: |
           echo "=== 修改内核版本信息 ==="
           
-          # 设置内核名称后缀: 6.1.118-android14-11-gca0ef6d17716-ab13624819
+          # 构建完整后缀: android14-11-gca0ef6d17716-ab13624819
+          # 格式: <android_version>-<sub_level>-<kernel_suffix>
+          FULL_SUFFIX="${{ inputs.android_version }}-${{ inputs.sub_level }}-${{ inputs.kernel_suffix }}"
+          echo "内核后缀: -${FULL_SUFFIX}"
+          
           # 使用覆盖方式 (与 cctv18 一致)
-          echo "内核后缀: -${{ inputs.kernel_suffix }}"
-          sed -i "\$s|echo \"\\\$res\"|echo \"-${{ inputs.kernel_suffix }}\"|" ./common/scripts/setlocalversion
+          sed -i "\$s|echo \"\\\$res\"|echo \"-${FULL_SUFFIX}\"|" ./common/scripts/setlocalversion
           
           # 设置构建时间
           BUILD_TIMESTAMP=$(date -u -d "${{ inputs.build_time }}" +%s 2>/dev/null || echo "1749578348")
