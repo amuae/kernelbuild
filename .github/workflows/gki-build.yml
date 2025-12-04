@@ -327,15 +327,6 @@ jobs:
               done
               [ -z "$KSU_API" ] && KSU_API="4.0.0"
               
-              # 不删除上游的动态版本逻辑，只覆盖关键变量
-              # 设置自定义版本标识 (在文件末尾追加，会覆盖之前的定义)
-              echo "" >> kernel/Kbuild
-              echo "# Custom version by amuae" >> kernel/Kbuild
-              echo "KSU_VERSION := $KSU_VERSION" >> kernel/Kbuild
-              echo "KSU_VERSION_FULL := v$KSU_API-$GIT_HASH@amuae" >> kernel/Kbuild
-              echo 'ccflags-y += -DKSU_VERSION=$(KSU_VERSION)' >> kernel/Kbuild
-              echo 'ccflags-y += -DKSU_VERSION_FULL="$(KSU_VERSION_FULL)"' >> kernel/Kbuild
-              
               echo "SukiSU 版本: v$KSU_API-$GIT_HASH ($KSU_VERSION)"
               ;;
               

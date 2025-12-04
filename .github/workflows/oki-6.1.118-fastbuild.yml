@@ -202,15 +202,7 @@ jobs:
             echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
             echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
             
-            # 不删除上游的动态版本逻辑，只在 Kbuild 末尾追加覆盖
-            echo "" >> kernel/Kbuild
-            echo "# Custom version by amuae" >> kernel/Kbuild
-            echo "KSU_VERSION := $KSU_VERSION" >> kernel/Kbuild
-            echo "KSU_VERSION_FULL := v$KSU_API_VERSION-$GIT_COMMIT_HASH@amuae" >> kernel/Kbuild
-            echo 'ccflags-y += -DKSU_VERSION=$(KSU_VERSION)' >> kernel/Kbuild
-            echo 'ccflags-y += -DKSU_VERSION_FULL="$(KSU_VERSION_FULL)"' >> kernel/Kbuild
-            
-            echo "SukiSU版本号: v${KSU_API_VERSION}-${GIT_COMMIT_HASH}@amuae ($KSU_VERSION)"
+            echo "SukiSU版本号: v${KSU_API_VERSION}-${GIT_COMMIT_HASH} ($KSU_VERSION)"
           elif [[ ${{ github.event.inputs.ksu_type }} == "ksunext" ]]; then
             echo "正在配置KernelSU Next..."
             curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s next-susfs
