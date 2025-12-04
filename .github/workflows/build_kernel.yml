@@ -276,8 +276,29 @@ jobs:
       - name: 修改内核版本信息
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          FULL_SUFFIX="${{ inputs.android_version }}-11-${{ inputs.kernel_suffix }}"
-          echo "内核后缀: -${FULL_SUFFIX}"
+          # 从 Google 源码动态获取 KMI Generation
+          # 优先从 build.config.constants 获取，否则从 build.config.common 获取
+          BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+          
+          KMI_GEN=$(curl -sL "https://android.googlesource.com/kernel/common/+/refs/heads/${BRANCH}/build.config.constants?format=TEXT" 2>/dev/null | \
+            base64 -d 2>/dev/null | grep -oP 'KMI_GENERATION=\K[0-9]+' || true)
+          
+          if [ -z "$KMI_GEN" ]; then
+            KMI_GEN=$(curl -sL "https://android.googlesource.com/kernel/common/+/refs/heads/${BRANCH}/build.config.common?format=TEXT" 2>/dev/null | \
+              base64 -d 2>/dev/null | grep -oP 'KMI_GENERATION=\K[0-9]+' || true)
+          fi
+          
+          # 如果仍然获取失败，使用本地配置文件
+          if [ -z "$KMI_GEN" ]; then
+            KMI_GEN=$(grep -oP 'KMI_GENERATION=\K[0-9]+' common/build.config.constants 2>/dev/null || \
+                      grep -oP 'KMI_GENERATION=\K[0-9]+' common/build.config.common 2>/dev/null || \
+                      echo "0")
+          fi
+          
+          echo "KMI_GEN=$KMI_GEN" >> $GITHUB_ENV
+          
+          FULL_SUFFIX="${{ inputs.android_version }}-${KMI_GEN}-${{ inputs.kernel_suffix }}"
+          echo "内核后缀: -${FULL_SUFFIX} (KMI Generation: ${KMI_GEN})"
           sed -i "\$s|echo \"\\\$res\"|echo \"-${FULL_SUFFIX}\"|" ./common/scripts/setlocalversion
           
           BUILD_TIMESTAMP=$(date -u -d "${{ inputs.build_time }}" +%s 2>/dev/null || echo "1749578348")
