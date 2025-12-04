@@ -335,9 +335,7 @@ jobs:
               sed -i '/define get_ksu_version_full/,/endef/d' kernel/Kbuild
               
               # 在 REPO_OWNER 行后插入我们的版本定义
-              sed -i "/^REPO_OWNER :=/a\\
-KSU_VERSION_API := $KSU_API\\
-KSU_VERSION_FULL := v$KSU_API-$GIT_HASH@amuae" kernel/Kbuild
+              sed -i "/^REPO_OWNER :=/a KSU_VERSION_API := $KSU_API\nKSU_VERSION_FULL := v$KSU_API-$GIT_HASH@amuae" kernel/Kbuild
               
               # 确保 ccflags 包含版本号
               if ! grep -q "DKSU_VERSION=" kernel/Kbuild; then
