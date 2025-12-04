@@ -615,13 +615,13 @@ jobs:
           #创建 CC (编译器) 包装器
           echo '#!/bin/bash' > cc-wrapper
           echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> cc-wrapper
-          echo 'export FAKESTAT="2025-08-25 13:49:08"' >> cc-wrapper
+          echo 'export FAKESTAT="'$FAKESTAT'"' >> cc-wrapper
           echo 'export FAKETIME="'$FAKETIME'"' >> cc-wrapper
           echo 'ccache clang "$@"' >> cc-wrapper
           #创建 LD (链接器) 包装器
           echo '#!/bin/bash' > ld-wrapper
           echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> ld-wrapper
-          echo 'export FAKESTAT="2025-08-25 13:49:08"' >> ld-wrapper
+          echo 'export FAKESTAT="'$FAKESTAT'"' >> ld-wrapper
           echo 'export FAKETIME="'$FAKETIME'"' >> ld-wrapper
           echo 'ld.lld "$@"' >> ld-wrapper
           
@@ -629,7 +629,7 @@ jobs:
           echo "--- [Wrapper Test] 正在创建通用的时间劫持测试脚本 ---"
           echo '#!/bin/bash' > test-wrapper.sh
           echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> test-wrapper.sh
-          echo 'export FAKESTAT="2025-08-25 13:49:08"' >> test-wrapper.sh
+          echo 'export FAKESTAT="'$FAKESTAT'"' >> test-wrapper.sh
           echo 'export FAKETIME="'$FAKETIME'"' >> test-wrapper.sh
           echo 'echo ">>> Wrapper 内部环境检查完毕."' >> test-wrapper.sh
           echo 'exec "$@"' >> test-wrapper.sh # 执行所有传入的参数
