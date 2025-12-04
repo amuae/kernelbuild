@@ -43,21 +43,6 @@ on:
           - ksunext
           - mksu
           - ksu
-      susfs_enable:
-        description: '启用 SUSFS'
-        required: true
-        default: true
-        type: boolean
-      kpm_enable:
-        description: '启用 KPM (仅 SukiSU)'
-        required: true
-        default: false
-        type: boolean
-      features:
-        description: '额外功能 (逗号分隔: lz4kd,ipset,bbg,rekernel,wireguard)'
-        required: false
-        default: 'ipset,bbg,wireguard'
-        type: string
       kernel_suffix:
         description: '内核名称后缀 (如: gca0ef6d17716-ab13624819)'
         required: false
@@ -80,12 +65,14 @@ jobs:
     runs-on: ubuntu-latest
     
     env:
-      # 解析 features 输入
-      LZ4KD_ENABLE: ${{ contains(inputs.features, 'lz4kd') }}
-      IPSET_ENABLE: ${{ contains(inputs.features, 'ipset') }}
-      BBG_ENABLE: ${{ contains(inputs.features, 'bbg') }}
-      REKERNEL_ENABLE: ${{ contains(inputs.features, 'rekernel') }}
-      WIREGUARD_ENABLE: ${{ contains(inputs.features, 'wireguard') }}
+      # 功能开关 (默认值)
+      SUSFS_ENABLE: true
+      KPM_ENABLE: false
+      LZ4KD_ENABLE: true
+      IPSET_ENABLE: true
+      BBG_ENABLE: true
+      REKERNEL_ENABLE: true
+      WIREGUARD_ENABLE: true
     
     steps:
       # ==================== 环境准备 ====================
@@ -363,7 +350,7 @@ jobs:
 
       # ==================== 应用 SUSFS 补丁 ====================
       - name: 应用 SUSFS 补丁
-        if: inputs.susfs_enable
+        if: env.SUSFS_ENABLE == 'true'
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
           echo "=== 应用 SUSFS 补丁 ==="
@@ -550,12 +537,12 @@ jobs:
           echo "CONFIG_KSU=y" >> "$DEFCONFIG"
           
           # KPM 支持 (仅 SukiSU)
-          if [[ "${{ inputs.kpm_enable }}" == "true" && "${{ inputs.ksu_type }}" == "sukisu" ]]; then
+          if [[ "$KPM_ENABLE" == "true" && "${{ inputs.ksu_type }}" == "sukisu" ]]; then
             echo "CONFIG_KPM=y" >> "$DEFCONFIG"
           fi
           
           # SUSFS 配置
-          if [ "${{ inputs.susfs_enable }}" == "true" ]; then
+          if [ "$SUSFS_ENABLE" == "true" ]; then
             echo "" >> "$DEFCONFIG"
             echo "# SUSFS Configuration" >> "$DEFCONFIG"
             echo "CONFIG_KSU_SUSFS=y" >> "$DEFCONFIG"
@@ -660,7 +647,7 @@ jobs:
 
       # KPM 后处理 (仅对 SukiSU + KPM 生效)
       - name: 应用 KPM 补丁
-        if: inputs.ksu_type == 'SukiSU' && inputs.kpm_enable == true
+        if: inputs.ksu_type == 'sukisu' && env.KPM_ENABLE == 'true'
         run: |
           echo "=== 应用 KPM 补丁 ==="
           cd $KERNEL_ROOT
@@ -741,9 +728,8 @@ jobs:
             - **Android 版本**: ${{ inputs.android_version }}
             - **内核版本**: ${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}
             - **KernelSU**: ${{ inputs.ksu_type }} (v${{ env.KSUVER }})
-            - **SUSFS**: ${{ inputs.susfs_enable }}
-            - **KPM**: ${{ inputs.kpm_enable }}
-            - **额外功能**: ${{ inputs.features }}
+            - **SUSFS**: ✅ 启用
+            - **KPM**: ${{ env.KPM_ENABLE == 'true' && '✅ 启用' || '❌ 禁用' }}
           files: |
             ${{ env.IMAGE_NAME }}
             ${{ env.ZIP_NAME }}
@@ -762,10 +748,8 @@ jobs:
             exit 0
           fi
           
-          # 构建 SUSFS 和 KPM 状态文本
-          SUSFS_STATUS="${{ inputs.susfs_enable == true && '✅ 启用' || '❌ 禁用' }}"
-          KPM_STATUS="${{ inputs.kpm_enable == true && '✅ 启用' || '❌ 禁用' }}"
-          FEATURES="${{ inputs.features || '无' }}"
+          # KPM 状态文本
+          KPM_STATUS="${{ env.KPM_ENABLE == 'true' && '✅ 启用' || '❌ 禁用' }}"
           
           # 构建信息 (使用 heredoc 避免缩进问题)
           BUILD_INFO=$(cat << EOF
@@ -774,9 +758,8 @@ jobs:
           📱 *Android*: ${{ inputs.android_version }}
           🔢 *内核版本*: ${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}
           🔧 *KernelSU*: ${{ inputs.ksu_type }} (v${{ env.KSUVER }})
-          🔒 *SUSFS*: ${SUSFS_STATUS}
+          🔒 *SUSFS*: ✅ 启用
           ⚡ *KPM*: ${KPM_STATUS}
-          📦 *功能*: ${FEATURES}
           
           🔗 [查看 Actions](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
           EOF
