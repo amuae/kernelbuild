@@ -694,49 +694,35 @@ jobs:
             exit 1
           fi
           
+          # 复制 Image 到工作目录并重命名
+          IMAGE_NAME="${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-${{ inputs.android_version }}-${{ inputs.ksu_type }}-Image"
+          cp "$IMAGE_PATH" "./$IMAGE_NAME"
+          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
+          
+          # 复制到 AnyKernel3 并打包
           cp "$IMAGE_PATH" AnyKernel3/Image
           
           # 创建 ZIP
           cd AnyKernel3
-          ZIP_NAME="${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-${{ inputs.android_version }}-${{ inputs.ksu_type }}.zip"
+          ZIP_NAME="${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-${{ inputs.android_version }}-${{ inputs.ksu_type }}-AnyKernel3.zip"
           zip -r9 "../$ZIP_NAME" * -x .git .gitignore README.md
           
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
           echo "打包完成: $ZIP_NAME"
 
-      - name: 生成 boot.img
-        run: |
-          echo "=== 生成 boot.img ==="
-          mkdir -p bootimgs
-          
-          if [ -f "$KERNEL_ROOT/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image" ]; then
-            cp "$KERNEL_ROOT/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image" bootimgs/
-            cp "$KERNEL_ROOT/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image.lz4" bootimgs/ 2>/dev/null || true
-          else
-            cp "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" bootimgs/
-            cp "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image.lz4" bootimgs/ 2>/dev/null || true
-          fi
-          
-          cd bootimgs
-          gzip -n -k -f -9 Image
-          
-          # 创建 boot.img
-          $MKBOOTIMG --header_version 4 --kernel Image --output boot.img
-          $AVBTOOL add_hash_footer --partition_name boot --partition_size $((64 * 1024 * 1024)) \
-            --image boot.img --algorithm SHA256_RSA2048 --key $BOOT_SIGN_KEY_PATH
-          
-          BOOT_NAME="${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-${{ inputs.android_version }}-${{ inputs.ksu_type }}-boot.img"
-          cp boot.img "../$BOOT_NAME"
-          echo "BOOT_NAME=$BOOT_NAME" >> $GITHUB_ENV
-
       # ==================== 上传 ====================
-      - name: 上传构建产物
+      - name: 上传 Image
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.ksu_type }}-kernel
-          path: |
-            ${{ env.ZIP_NAME }}
-            ${{ env.BOOT_NAME }}
+          name: ${{ env.IMAGE_NAME }}
+          path: ${{ env.IMAGE_NAME }}
+          compression-level: 0
+
+      - name: 上传 AnyKernel3
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_NAME }}
+          path: ${{ env.ZIP_NAME }}
           compression-level: 0
 
       - name: 创建 Release
@@ -751,9 +737,49 @@ jobs:
             - **内核版本**: ${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}
             - **KernelSU**: ${{ inputs.ksu_type }} (v${{ env.KSUVER }})
             - **SUSFS**: ${{ inputs.susfs_enable }}
+            - **KPM**: ${{ inputs.kpm_enable }}
             - **额外功能**: ${{ inputs.features }}
           files: |
+            ${{ env.IMAGE_NAME }}
             ${{ env.ZIP_NAME }}
-            ${{ env.BOOT_NAME }}
           draft: false
           prerelease: false
+
+      # ==================== Telegram 通知 ====================
+      - name: 发送 Telegram 通知
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Telegram 配置未设置，跳过通知"
+            exit 0
+          fi
+          
+          # 构建 SUSFS 和 KPM 状态文本
+          SUSFS_STATUS="${{ inputs.susfs_enable == true && '✅ 启用' || '❌ 禁用' }}"
+          KPM_STATUS="${{ inputs.kpm_enable == true && '✅ 启用' || '❌ 禁用' }}"
+          FEATURES="${{ inputs.features || '无' }}"
+          
+          # 构建信息 (使用 heredoc 避免缩进问题)
+          BUILD_INFO=$(cat << EOF
+          🌽 *GKI 内核构建成功*
+          
+          📱 *Android*: ${{ inputs.android_version }}
+          🔢 *内核版本*: ${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}
+          🔧 *KernelSU*: ${{ inputs.ksu_type }} (v${{ env.KSUVER }})
+          🔒 *SUSFS*: ${SUSFS_STATUS}
+          ⚡ *KPM*: ${KPM_STATUS}
+          📦 *功能*: ${FEATURES}
+          
+          🔗 [查看 Actions](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          EOF
+          )
+
+          # 发送 AnyKernel3 包
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+            -F chat_id="${TELEGRAM_CHAT_ID}" \
+            -F document=@"${{ env.ZIP_NAME }}" \
+            -F caption="${BUILD_INFO}" \
+            -F parse_mode="Markdown"
