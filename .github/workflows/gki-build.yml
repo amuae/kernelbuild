@@ -62,7 +62,7 @@ on:
 jobs:
   build:
     name: "构建 ${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     
     env:
       # 功能开关 (默认值)
