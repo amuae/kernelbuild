@@ -786,7 +786,7 @@ jobs:
           fi
           
           # 构建信息
-          BUILD_INFO=$(cat << EOF
+          BUILD_INFO=$(cat << MSGEOF
           🌽 *OKI 内核构建成功*
           
           📱 *机型*: 欧加真骁龙8Gen3通用
@@ -797,7 +797,7 @@ jobs:
           ⚡ *KPM*: ${KPM_STATUS}
           
           🔗 [查看 Actions](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
-          EOF
+          MSGEOF
           )
 
           # 查找并发送 AnyKernel3 包
