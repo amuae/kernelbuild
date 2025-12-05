@@ -594,6 +594,8 @@ jobs:
             echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$DEFCONFIG"
             echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$DEFCONFIG"
             echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> "$DEFCONFIG"
+          else
+            echo "CONFIG_KSU_SUSFS=n" >> "$DEFCONFIG"
           fi
           
           # Mountify 支持
