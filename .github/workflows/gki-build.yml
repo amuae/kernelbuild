@@ -618,10 +618,21 @@ jobs:
             echo "CONFIG_WIREGUARD=y" >> "$DEFCONFIG"
           fi
           
-          # IPSet 支持
+          # IPSet 支持 (包含 TPROXY 等 netfilter 扩展)
           if [ "${{ env.IPSET_ENABLE }}" == "true" ]; then
             echo "" >> "$DEFCONFIG"
-            echo "# IPSet Support" >> "$DEFCONFIG"
+            echo "# IPSet and Netfilter Extensions (for tproxy.sh)" >> "$DEFCONFIG"
+            # TPROXY 透明代理支持
+            echo "CONFIG_NETFILTER_TPROXY=y" >> "$DEFCONFIG"
+            echo "CONFIG_NETFILTER_XT_TARGET_TPROXY=y" >> "$DEFCONFIG"
+            # Netfilter 匹配扩展
+            echo "CONFIG_NETFILTER_XT_SET=y" >> "$DEFCONFIG"
+            echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y" >> "$DEFCONFIG"
+            echo "CONFIG_NETFILTER_XT_MATCH_MARK=y" >> "$DEFCONFIG"
+            echo "CONFIG_NETFILTER_XT_TARGET_MARK=y" >> "$DEFCONFIG"
+            echo "CONFIG_NETFILTER_XT_MATCH_OWNER=y" >> "$DEFCONFIG"
+            echo "CONFIG_NETFILTER_XT_MATCH_MAC=y" >> "$DEFCONFIG"
+            # IPSet 核心
             echo "CONFIG_IP_SET=y" >> "$DEFCONFIG"
             echo "CONFIG_IP_SET_MAX=65534" >> "$DEFCONFIG"
             echo "CONFIG_IP_SET_BITMAP_IP=y" >> "$DEFCONFIG"
@@ -640,8 +651,10 @@ jobs:
             echo "CONFIG_IP_SET_HASH_NETPORT=y" >> "$DEFCONFIG"
             echo "CONFIG_IP_SET_HASH_NETIFACE=y" >> "$DEFCONFIG"
             echo "CONFIG_IP_SET_LIST_SET=y" >> "$DEFCONFIG"
+            # IPv6 NAT
             echo "CONFIG_IP6_NF_NAT=y" >> "$DEFCONFIG"
             echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y" >> "$DEFCONFIG"
+            echo "CONFIG_IP6_NF_TARGET_REDIRECT=y" >> "$DEFCONFIG"
           fi
           
           # LZ4KD 配置

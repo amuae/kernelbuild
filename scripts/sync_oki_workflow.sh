@@ -47,12 +47,19 @@ sed -i "s/^name:.*$/name: $WORKFLOW_NAME/" "$TARGET_WORKFLOW"
 echo -e "${YELLOW}[3/5] 修改默认内核后缀...${NC}"
 sed -i "s/KERNEL_NAME: '.*'/KERNEL_NAME: '$KERNEL_NAME'/" "$TARGET_WORKFLOW"
 
-echo -e "${YELLOW}[4/5] 修改伪装构建时间...${NC}"
+echo -e "${YELLOW}[4/6] 修改伪装构建时间...${NC}"
 # 只修改定义 FAKESTAT/FAKETIME 的那两行，不替换 wrapper 脚本中的 '$FAKESTAT' 变量引用
 sed -i '/echo.*\$FAKESTAT/!s/export FAKESTAT="[^"]*"/export FAKESTAT="'"$FAKE_DATE"'"/' "$TARGET_WORKFLOW"
 sed -i '/echo.*\$FAKETIME/!s/export FAKETIME="@[^"]*"/export FAKETIME="@'"$FAKE_DATE"'"/' "$TARGET_WORKFLOW"
 
-echo -e "${YELLOW}[5/5] 移除自动创建 Release 并添加 Telegram 通知...${NC}"
+echo -e "${YELLOW}[5/6] 补全 TPROXY/netfilter 扩展配置...${NC}"
+# 在 CONFIG_NETFILTER_XT_MATCH_ADDRTYPE 之前添加 TPROXY 和其他 netfilter 扩展
+sed -i '/CONFIG_NETFILTER_XT_MATCH_ADDRTYPE/i\          # TPROXY 透明代理支持 (for tproxy.sh)\n          echo "CONFIG_NETFILTER_TPROXY=y" >> ./common/arch/arm64/configs/gki_defconfig\n          echo "CONFIG_NETFILTER_XT_TARGET_TPROXY=y" >> ./common/arch/arm64/configs/gki_defconfig\n          # Netfilter 扩展匹配模块\n          echo "CONFIG_NETFILTER_XT_MATCH_MARK=y" >> ./common/arch/arm64/configs/gki_defconfig\n          echo "CONFIG_NETFILTER_XT_TARGET_MARK=y" >> ./common/arch/arm64/configs/gki_defconfig\n          echo "CONFIG_NETFILTER_XT_MATCH_OWNER=y" >> ./common/arch/arm64/configs/gki_defconfig\n          echo "CONFIG_NETFILTER_XT_MATCH_MAC=y" >> ./common/arch/arm64/configs/gki_defconfig' "$TARGET_WORKFLOW"
+
+# 在 CONFIG_IP6_NF_TARGET_MASQUERADE 后添加 IPv6 REDIRECT 支持
+sed -i '/CONFIG_IP6_NF_TARGET_MASQUERADE/a\          echo "CONFIG_IP6_NF_TARGET_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig' "$TARGET_WORKFLOW"
+
+echo -e "${YELLOW}[6/6] 移除自动创建 Release 并添加 Telegram 通知...${NC}"
 
 # 创建 Python 修改脚本
 cat > /tmp/modify_oki_workflow.py << 'PYTHON_EOF'
@@ -189,6 +196,13 @@ else
     ERRORS=$((ERRORS+1))
 fi
 
+if grep -q "CONFIG_NETFILTER_XT_TARGET_TPROXY" "$TARGET_WORKFLOW"; then
+    echo -e "  ${GREEN}✓${NC} 已添加 TPROXY/netfilter 扩展配置"
+else
+    echo -e "  ${RED}✗${NC} 添加 TPROXY/netfilter 扩展配置失败"
+    ERRORS=$((ERRORS+1))
+fi
+
 if ! grep -q "创建发布" "$TARGET_WORKFLOW"; then
     echo -e "  ${GREEN}✓${NC} 已移除自动创建 Release"
 else
@@ -219,12 +233,13 @@ echo -e "已应用的修改:"
 echo -e "  ${BLUE}•${NC} 工作流名称: ${GREEN}$WORKFLOW_NAME${NC}"
 echo -e "  ${BLUE}•${NC} 内核后缀: ${GREEN}$KERNEL_NAME${NC}"
 echo -e "  ${BLUE}•${NC} 伪装时间: ${GREEN}$FAKE_DATE${NC}"
+echo -e "  ${BLUE}•${NC} 补全 TPROXY/netfilter 扩展配置"
 echo -e "  ${BLUE}•${NC} 移除自动创建 Release"
 echo -e "  ${BLUE}•${NC} 添加 Telegram 通知"
 
 # 自动提交更改
 echo ""
-echo -e "${YELLOW}[6/6] 提交更改到 Git...${NC}"
+echo -e "${YELLOW}[7/7] 提交更改到 Git...${NC}"
 
 # 检查是否有更改
 if git diff --quiet "$TARGET_WORKFLOW" 2>/dev/null; then
