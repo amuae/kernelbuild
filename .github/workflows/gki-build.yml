@@ -427,7 +427,43 @@ jobs:
               patch -p2 -N -F 3 < fix_apk_sign.c.patch || true
               ;;
               
-            mksu|ksu)
+            mksu)
+              # MKSU 使用本项目自定义补丁
+              echo "配置 MKSU SUSFS 补丁..."
+              git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}
+              git clone https://github.com/ShirkNeko/SukiSU_patch.git
+              
+              # 复制 SUSFS 核心文件到内核
+              cp susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch common/
+              cp susfs4ksu/kernel_patches/fs/* common/fs/
+              cp susfs4ksu/kernel_patches/include/linux/* common/include/linux/
+              cp SukiSU_patch/69_hide_stuff.patch common/
+              
+              # 下载本项目的 MKSU SUSFS 补丁
+              MKSU_PATCHES_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/patches/mksu"
+              mkdir -p mksu_patches
+              for patch in 01_mksu_susfs_selinux.patch 02_mksu_susfs_setuid_hook.patch 03_mksu_susfs_supercalls.patch \
+                           04_mksu_susfs_ksu.patch 05_mksu_susfs_ksud.patch 06_mksu_susfs_sucompat.patch \
+                           07_mksu_susfs_allowlist.patch 08_mksu_susfs_kernel_umount.patch \
+                           09_mksu_susfs_kconfig_kbuild.patch 10_mksu_susfs_app_profile.patch; do
+                wget -q "$MKSU_PATCHES_URL/$patch" -O "mksu_patches/$patch" || echo "跳过: $patch"
+              done
+              
+              # 应用 MKSU SUSFS 补丁
+              cd KernelSU
+              for patch in ../mksu_patches/*.patch; do
+                if [ -f "$patch" ]; then
+                  echo "应用补丁: $(basename $patch)"
+                  patch -p1 -F 3 < "$patch" || true
+                fi
+              done
+              
+              cd ../common
+              patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
+              patch -p1 -N -F 3 < 69_hide_stuff.patch || true
+              ;;
+              
+            ksu)
               git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}
               git clone https://github.com/ShirkNeko/SukiSU_patch.git
               
@@ -458,14 +494,6 @@ jobs:
               
               cd KernelSU
               patch -p1 < 10_enable_susfs_for_ksu.patch || true
-              
-              # 为MKSU修正susfs 2.0.0补丁
-              if [ "${{ inputs.ksu_type }}" == "mksu" ]; then
-                wget -q https://github.com/cctv18/oppo_oplus_realme_sm8650/raw/refs/heads/main/other_patch/mksu_supercalls.patch
-                patch -p1 < mksu_supercalls.patch || true
-              fi
-              wget -q https://github.com/cctv18/oppo_oplus_realme_sm8650/raw/refs/heads/main/other_patch/fix_umount.patch
-              patch -p1 < fix_umount.patch || true
               
               cd ../common
               patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
