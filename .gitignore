@@ -1,1 +1,5 @@
+# 本地构建测试目录 (不上传到仓库)
+build-test/
+
+# 其他忽略文件
 download.sh
