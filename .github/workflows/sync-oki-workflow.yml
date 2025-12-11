@@ -63,7 +63,6 @@ jobs:
           
           python3 << 'PYEOF'
           import os
-          import re
 
           target_file = os.environ['TARGET_WORKFLOW']
 
@@ -74,17 +73,21 @@ jobs:
           # 原始配置缺少 TPROXY 透明代理支持，我们需要添加
           
           # 定义要添加的增强网络配置（TPROXY 和其他 GKI 有的配置）
-          enhanced_net_configs = '''
-          # ===== TPROXY 透明代理支持 (与 GKI 保持一致) =====
-          echo "CONFIG_NETFILTER_TPROXY=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_NETFILTER_XT_TARGET_TPROXY=y" >> ./common/arch/arm64/configs/gki_defconfig
-          # ===== 额外的 Netfilter 匹配扩展 =====
-          echo "CONFIG_NETFILTER_XT_MATCH_MARK=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_NETFILTER_XT_TARGET_MARK=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_NETFILTER_XT_MATCH_OWNER=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_NETFILTER_XT_MATCH_MAC=y" >> ./common/arch/arm64/configs/gki_defconfig
-          # ===== IPv6 重定向支持 =====
-          echo "CONFIG_IP6_NF_TARGET_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig'''
+          # 注意: 每行需要 10 个空格缩进以匹配 YAML run: | 块的格式
+          indent = "          "
+          enhanced_lines = [
+              "# ===== TPROXY 透明代理支持 (与 GKI 保持一致) =====",
+              'echo "CONFIG_NETFILTER_TPROXY=y" >> ./common/arch/arm64/configs/gki_defconfig',
+              'echo "CONFIG_NETFILTER_XT_TARGET_TPROXY=y" >> ./common/arch/arm64/configs/gki_defconfig',
+              "# ===== 额外的 Netfilter 匹配扩展 =====",
+              'echo "CONFIG_NETFILTER_XT_MATCH_MARK=y" >> ./common/arch/arm64/configs/gki_defconfig',
+              'echo "CONFIG_NETFILTER_XT_TARGET_MARK=y" >> ./common/arch/arm64/configs/gki_defconfig',
+              'echo "CONFIG_NETFILTER_XT_MATCH_OWNER=y" >> ./common/arch/arm64/configs/gki_defconfig',
+              'echo "CONFIG_NETFILTER_XT_MATCH_MAC=y" >> ./common/arch/arm64/configs/gki_defconfig',
+              "# ===== IPv6 重定向支持 =====",
+              'echo "CONFIG_IP6_NF_TARGET_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig',
+          ]
+          enhanced_net_configs = "\n".join(indent + line for line in enhanced_lines)
 
           # 查找 better_net 配置块的结尾（在 config.patch 之前插入）
           # 原始工作流中 better_net 最后是下载并应用 config.patch
@@ -94,7 +97,7 @@ jobs:
               # 在 config.patch 下载之前插入增强配置
               content = content.replace(
                   patch_marker,
-                  enhanced_net_configs + '\n          ' + patch_marker
+                  enhanced_net_configs + "\n" + indent + patch_marker
               )
               print("已添加 TPROXY 透明代理及增强网络功能配置")
           else:
@@ -105,7 +108,7 @@ jobs:
                   pos = content.find(masq_marker)
                   line_end = content.find('\n', pos)
                   if line_end != -1:
-                      content = content[:line_end+1] + enhanced_net_configs + content[line_end+1:]
+                      content = content[:line_end+1] + enhanced_net_configs + "\n" + content[line_end+1:]
                       print("已在 MASQUERADE 配置后添加 TPROXY 及增强网络功能配置")
               else:
                   print("警告: 未找到 better_net 配置块，增强配置未添加")
