@@ -9,7 +9,7 @@ on:
       force_update:
         description: '强制更新（忽略文件差异检查）'
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
 env:
@@ -56,6 +56,65 @@ jobs:
           sed -i '/echo.*\$FAKETIME/!s/export FAKETIME="@[^"]*"/export FAKETIME="@'"$FAKE_DATE"'"/' "$TARGET_WORKFLOW"
 
           echo "基础修改完成"
+
+      - name: 增强网络功能配置 (TPROXY/IPSet/IPv6)
+        run: |
+          echo "正在增强 better_net 网络功能配置..."
+          
+          python3 << 'PYEOF'
+          import os
+          import re
+
+          target_file = os.environ['TARGET_WORKFLOW']
+
+          with open(target_file, 'r', encoding='utf-8') as f:
+              content = f.read()
+
+          # 查找 better_net 步骤并增强其配置
+          # 原始配置缺少 TPROXY 透明代理支持，我们需要添加
+          
+          # 定义要添加的增强网络配置（TPROXY 和其他 GKI 有的配置）
+          enhanced_net_configs = '''
+          # ===== TPROXY 透明代理支持 (与 GKI 保持一致) =====
+          echo "CONFIG_NETFILTER_TPROXY=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NETFILTER_XT_TARGET_TPROXY=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # ===== 额外的 Netfilter 匹配扩展 =====
+          echo "CONFIG_NETFILTER_XT_MATCH_MARK=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NETFILTER_XT_TARGET_MARK=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NETFILTER_XT_MATCH_OWNER=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NETFILTER_XT_MATCH_MAC=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # ===== IPv6 重定向支持 =====
+          echo "CONFIG_IP6_NF_TARGET_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig'''
+
+          # 查找 better_net 配置块的结尾（在 config.patch 之前插入）
+          # 原始工作流中 better_net 最后是下载并应用 config.patch
+          patch_marker = 'wget https://github.com/cctv18/oppo_oplus_realme_sm8650/raw/refs/heads/main/other_patch/config.patch'
+          
+          if patch_marker in content:
+              # 在 config.patch 下载之前插入增强配置
+              content = content.replace(
+                  patch_marker,
+                  enhanced_net_configs + '\n          ' + patch_marker
+              )
+              print("已添加 TPROXY 透明代理及增强网络功能配置")
+          else:
+              # 如果找不到 config.patch，尝试在 IP6_NF_TARGET_MASQUERADE 之后插入
+              masq_marker = 'echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y"'
+              if masq_marker in content:
+                  # 找到该行的结尾
+                  pos = content.find(masq_marker)
+                  line_end = content.find('\n', pos)
+                  if line_end != -1:
+                      content = content[:line_end+1] + enhanced_net_configs + content[line_end+1:]
+                      print("已在 MASQUERADE 配置后添加 TPROXY 及增强网络功能配置")
+              else:
+                  print("警告: 未找到 better_net 配置块，增强配置未添加")
+
+          with open(target_file, 'w', encoding='utf-8') as f:
+              f.write(content)
+
+          print("网络功能增强完成")
+          PYEOF
 
       - name: 移除自动发布并添加 Telegram 通知
         run: |
@@ -142,6 +201,28 @@ jobs:
             echo "✓ 已添加 Telegram 通知"
           else
             echo "✗ 添加 Telegram 通知失败"
+            ERRORS=$((ERRORS+1))
+          fi
+
+          # 验证增强网络功能
+          if grep -q "CONFIG_NETFILTER_TPROXY=y" "$TARGET_WORKFLOW"; then
+            echo "✓ 已添加 TPROXY 透明代理支持"
+          else
+            echo "✗ TPROXY 透明代理支持添加失败"
+            ERRORS=$((ERRORS+1))
+          fi
+
+          if grep -q "CONFIG_NETFILTER_XT_TARGET_TPROXY=y" "$TARGET_WORKFLOW"; then
+            echo "✓ 已添加 TPROXY 目标支持"
+          else
+            echo "✗ TPROXY 目标支持添加失败"
+            ERRORS=$((ERRORS+1))
+          fi
+
+          if grep -q "CONFIG_IP6_NF_TARGET_REDIRECT=y" "$TARGET_WORKFLOW"; then
+            echo "✓ 已添加 IPv6 重定向支持"
+          else
+            echo "✗ IPv6 重定向支持添加失败"
             ERRORS=$((ERRORS+1))
           fi
 
