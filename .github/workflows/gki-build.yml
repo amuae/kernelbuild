@@ -16,6 +16,8 @@ on:
         default: 'android14'
         type: choice
         options:
+          - android12
+          - android13
           - android14
           - android15
           - android16
@@ -25,6 +27,8 @@ on:
         default: '6.1'
         type: choice
         options:
+          - '5.10'
+          - '5.15'
           - '6.1'
           - '6.6'
           - '6.12'
@@ -162,6 +166,77 @@ jobs:
             local sl=$2
             
             case "$kv" in
+              "5.10")
+                # Android 12/13 - 5.10 映射表
+                case "$sl" in
+                  # Android 12 系列
+                  43) echo "2021-11" ;;
+                  66) echo "2022-01" ;;
+                  81) echo "2022-03" ;;
+                  101) echo "2022-05" ;;
+                  107) echo "2022-05" ;;
+                  110) echo "2022-07" ;;
+                  117) echo "2022-09" ;;
+                  136) echo "2022-11" ;;
+                  149) echo "2023-01" ;;
+                  157) echo "2023-03" ;;
+                  160) echo "2023-03" ;;
+                  168) echo "2023-05" ;;
+                  177) echo "2023-07" ;;
+                  185) echo "2023-09" ;;
+                  186) echo "2023-09" ;;
+                  189) echo "2023-11" ;;
+                  198) echo "2024-01" ;;
+                  205) echo "2024-03" ;;
+                  209) echo "2024-05" ;;
+                  210) echo "2024-06" ;;
+                  214) echo "2024-07" ;;
+                  218) echo "2024-08" ;;
+                  223) echo "2024-11" ;;
+                  226) echo "2024-11" ;;
+                  228) echo "2025-01" ;;
+                  233) echo "2025-02" ;;
+                  234) echo "2025-03" ;;
+                  236) echo "2025-05" ;;
+                  237) echo "2025-06" ;;
+                  238) echo "2025-07" ;;
+                  240) echo "2025-09" ;;
+                  243) echo "2025-10" ;;
+                  246) echo "2025-12" ;;
+                  *) echo "lts" ;;
+                esac
+                ;;
+              "5.15")
+                # Android 13/14 - 5.15 映射表
+                case "$sl" in
+                  41) echo "2022-11" ;;
+                  74) echo "2023-01" ;;
+                  78) echo "2023-03" ;;
+                  94) echo "2023-05" ;;
+                  104) echo "2023-07" ;;
+                  110) echo "2023-08" ;;
+                  119) echo "2023-09" ;;
+                  123) echo "2023-11" ;;
+                  131) echo "2023-11" ;;
+                  137) echo "2024-01" ;;
+                  144) echo "2024-03" ;;
+                  148) echo "2024-05" ;;
+                  149) echo "2024-07" ;;
+                  151) echo "2024-08" ;;
+                  153) echo "2024-09" ;;
+                  158) echo "2024-08" ;;
+                  164) echo "2024-09" ;;
+                  167) echo "2024-11" ;;
+                  170) echo "2025-01" ;;
+                  178) echo "2025-03" ;;
+                  180) echo "2025-05" ;;
+                  185) echo "2025-07" ;;
+                  189) echo "2025-09" ;;
+                  192) echo "2025-10" ;;
+                  194) echo "2025-12" ;;
+                  *) echo "lts" ;;
+                esac
+                ;;
               "6.1")
                 # Android 14 - 6.1 映射表
                 case "$sl" in
@@ -185,6 +260,7 @@ jobs:
                   138) echo "2025-06" ;;
                   141) echo "2025-07" ;;
                   145) echo "2025-09" ;;
+                  157) echo "2025-12" ;;
                   *) echo "lts" ;;
                 esac
                 ;;
@@ -264,13 +340,19 @@ jobs:
       - name: 清理 ABI 保护和 dirty 后缀
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          # 移除 ABI 保护文件和 BUILD.bazel 中的引用
+          # 移除 ABI 保护文件和 BUILD.bazel 中的引用 (仅新版本)
           rm -rf common/android/abi_gki_protected_exports_* || true
           perl -pi -e 's/^\s*"protected_exports_list"\s*:\s*"android\/abi_gki_protected_exports_aarch64",\s*$//;' common/BUILD.bazel || true
           
           # 移除 dirty 后缀
-          sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" build/kernel/kleaf/impl/stamp.bzl || true
-          sed -i 's/ -dirty//g' common/scripts/setlocalversion || true
+          if [ -f "build/build.sh" ]; then
+            # 旧版本 (5.10/5.15): 使用 build.sh 编译
+            sed -i 's/-dirty//' common/scripts/setlocalversion || true
+          else
+            # 新版本 (6.1+): 使用 bazel 编译
+            sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" build/kernel/kleaf/impl/stamp.bzl || true
+            sed -i 's/ -dirty//g' common/scripts/setlocalversion || true
+          fi
 
       - name: 修改内核版本信息
         working-directory: ${{ env.KERNEL_ROOT }}
@@ -682,7 +764,13 @@ jobs:
           echo "CONFIG_HEADERS_INSTALL=n" >> "$DEFCONFIG"
           
           # 禁用 defconfig 检查
-          sed -i 's/check_defconfig//' common/build.config.gki || true
+          if [[ "${{ inputs.android_version }}" == "android16" && "${{ inputs.kernel_version }}" == "6.12" ]]; then
+            # 6.12 需要修改 BUILD.bazel
+            sed -i '/name = "kernel_aarch64",/a\    check_defconfig = "disabled",' common/BUILD.bazel || true
+          else
+            # 其他版本修改 build.config.gki
+            sed -i 's/check_defconfig//' common/build.config.gki || true
+          fi
           
           echo "内核配置完成"
 
