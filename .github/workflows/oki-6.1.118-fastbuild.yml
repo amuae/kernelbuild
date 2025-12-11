@@ -476,8 +476,7 @@ jobs:
           echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y" >> ./common/arch/arm64/configs/gki_defconfig
           #由于部分机型的vintf兼容性检测规则，在开启CONFIG_IP6_NF_NAT后开机会出现"您的设备内部出现了问题。请联系您的设备制造商了解详情。"的提示，故添加一个配置修复补丁，在编译内核时隐藏CONFIG_IP6_NF_NAT=y但不影响对应功能编译
           cd common
-          
-          # ===== TPROXY 透明代理支持 (与 GKI 保持一致) =====
+                    # ===== TPROXY 透明代理支持 (与 GKI 保持一致) =====
           echo "CONFIG_NETFILTER_TPROXY=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_NETFILTER_XT_TARGET_TPROXY=y" >> ./common/arch/arm64/configs/gki_defconfig
           # ===== 额外的 Netfilter 匹配扩展 =====
