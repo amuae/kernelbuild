@@ -74,6 +74,7 @@ jobs:
           
           # 定义要添加的增强网络配置（TPROXY 和其他 GKI 有的配置）
           # 注意: 每行需要 10 个空格缩进以匹配 YAML run: | 块的格式
+          # 路径使用 ./common/... 因为我们要插入到 cd common 之前
           indent = "          "
           enhanced_lines = [
               "# ===== TPROXY 透明代理支持 (与 GKI 保持一致) =====",
@@ -89,29 +90,28 @@ jobs:
           ]
           enhanced_net_configs = "\n".join(indent + line for line in enhanced_lines)
 
-          # 查找 better_net 配置块的结尾（在 config.patch 之前插入）
-          # 原始工作流中 better_net 最后是下载并应用 config.patch
-          patch_marker = 'wget https://github.com/cctv18/oppo_oplus_realme_sm8650/raw/refs/heads/main/other_patch/config.patch'
+          # 查找 better_net 配置块
+          # 原始工作流在 CONFIG_IP6_NF_TARGET_MASQUERADE 之后会 cd common 然后下载 config.patch
+          # 我们要在 cd common 之前插入，这样路径 ./common/... 才正确
+          cd_common_marker = 'cd common'
+          masq_marker = 'echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y"'
           
-          if patch_marker in content:
-              # 在 config.patch 下载之前插入增强配置
-              content = content.replace(
-                  patch_marker,
-                  enhanced_net_configs + "\n" + indent + patch_marker
-              )
-              print("已添加 TPROXY 透明代理及增强网络功能配置")
-          else:
-              # 如果找不到 config.patch，尝试在 IP6_NF_TARGET_MASQUERADE 之后插入
-              masq_marker = 'echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y"'
-              if masq_marker in content:
-                  # 找到该行的结尾
-                  pos = content.find(masq_marker)
-                  line_end = content.find('\n', pos)
-                  if line_end != -1:
-                      content = content[:line_end+1] + enhanced_net_configs + "\n" + content[line_end+1:]
-                      print("已在 MASQUERADE 配置后添加 TPROXY 及增强网络功能配置")
+          # 方案: 在 cd common 之前插入配置
+          # 找到 better_net 步骤中的 cd common（在 MASQUERADE 之后）
+          masq_pos = content.find(masq_marker)
+          if masq_pos != -1:
+              # 从 MASQUERADE 位置开始找 cd common
+              cd_pos = content.find(cd_common_marker, masq_pos)
+              if cd_pos != -1:
+                  # 找到 cd common 所在行的开头
+                  line_start = content.rfind('\n', 0, cd_pos) + 1
+                  # 在 cd common 行之前插入增强配置
+                  content = content[:line_start] + enhanced_net_configs + "\n" + content[line_start:]
+                  print("已在 cd common 之前添加 TPROXY 透明代理及增强网络功能配置")
               else:
-                  print("警告: 未找到 better_net 配置块，增强配置未添加")
+                  print("警告: 未找到 cd common，增强配置未添加")
+          else:
+              print("警告: 未找到 better_net 配置块，增强配置未添加")
 
           with open(target_file, 'w', encoding='utf-8') as f:
               f.write(content)
