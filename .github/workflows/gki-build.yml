@@ -634,14 +634,14 @@ jobs:
         working-directory: ${{ env.KERNEL_ROOT }}/common
         run: |
           echo "=== 添加 Re-Kernel 支持 ==="
-          echo "CONFIG_RE_KERNEL=y" >> "${{ env.DEFCONFIG }}"
+          echo "CONFIG_REKERNEL=y" >> "${{ env.DEFCONFIG }}"
           
           curl -LSs "https://raw.githubusercontent.com/AuroraNova6/ReKernel/main/kernel/re_kernel.c" -o kernel/re_kernel.c
-          echo "obj-\$(CONFIG_RE_KERNEL) += re_kernel.o" >> kernel/Makefile
+          echo "obj-\$(CONFIG_REKERNEL) += re_kernel.o" >> kernel/Makefile
           
           # 添加 Kconfig
           echo "" >> kernel/Kconfig
-          echo "config RE_KERNEL" >> kernel/Kconfig
+          echo "config REKERNEL" >> kernel/Kconfig
           echo "    bool \"Re-Kernel support for enhanced app freezing\"" >> kernel/Kconfig
           echo "    default n" >> kernel/Kconfig
           echo "    help" >> kernel/Kconfig
