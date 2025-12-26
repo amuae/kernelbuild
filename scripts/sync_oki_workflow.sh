@@ -99,30 +99,28 @@ telegram_step = '''
             SUSFS_STATUS="❌ 禁用"
           fi
           
-          # 构建信息
-          BUILD_INFO=$(cat << EOF
-          🌽 *OKI 内核构建成功*
-          
-          📱 *机型*: 欧加真骁龙8Gen3通用
-          🔢 *内核名*: ${{ env.KERNEL_VERSION }}.118-${{ env.KERNEL_NAME }}
-          🕐 *内核时间*: ${{ env.FAKETIME }}
-          🔧 *KernelSU*: ${{ env.KSU_TYPENAME }} (v${{ needs.build.outputs.ksuver }})
-          🔒 *SUSFS*: ${SUSFS_STATUS}
-          ⚡ *KPM*: ${KPM_STATUS}
-          
-          🔗 [查看 Actions](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
-          EOF
-          )
+          # 构建信息 (注意: heredoc 结束符必须顶格)
+          BUILD_INFO="🌽 *OKI 内核构建成功*
+
+📱 *机型*: 欧加真骁龙8Gen3通用
+🔢 *内核版本*: 6.1.118
+🔧 *KernelSU*: ${{ env.KSU_TYPENAME }} (v${{ needs.build.outputs.ksuver }})
+🔒 *SUSFS*: ${SUSFS_STATUS}
+⚡ *KPM*: ${KPM_STATUS}
+
+🔗 [查看 Actions](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
 
           # 查找并发送 AnyKernel3 包
           ZIP_FILE=$(ls release_zips/AnyKernel3_*.zip 2>/dev/null | head -1)
           if [ -n "$ZIP_FILE" ]; then
+            echo "发送文件: $ZIP_FILE"
             curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \\
               -F chat_id="${TELEGRAM_CHAT_ID}" \\
               -F document=@"$ZIP_FILE" \\
               -F caption="${BUILD_INFO}" \\
               -F parse_mode="Markdown"
           else
+            echo "未找到 ZIP 文件，仅发送消息"
             curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \\
               -d chat_id="${TELEGRAM_CHAT_ID}" \\
               -d text="${BUILD_INFO}" \\
