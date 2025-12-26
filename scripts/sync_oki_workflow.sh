@@ -99,16 +99,16 @@ telegram_step = '''
             SUSFS_STATUS="❌ 禁用"
           fi
           
-          # 构建信息 (注意: heredoc 结束符必须顶格)
+          # 构建信息
           BUILD_INFO="🌽 *OKI 内核构建成功*
 
-📱 *机型*: 欧加真骁龙8Gen3通用
-🔢 *内核版本*: 6.1.118
-🔧 *KernelSU*: ${{ env.KSU_TYPENAME }} (v${{ needs.build.outputs.ksuver }})
-🔒 *SUSFS*: ${SUSFS_STATUS}
-⚡ *KPM*: ${KPM_STATUS}
+          📱 *机型*: 欧加真骁龙8Gen3通用
+          🔢 *内核版本*: 6.1.118
+          🔧 *KernelSU*: ${{ env.KSU_TYPENAME }} (v${{ needs.build.outputs.ksuver }})
+          🔒 *SUSFS*: ${SUSFS_STATUS}
+          ⚡ *KPM*: ${KPM_STATUS}
 
-🔗 [查看 Actions](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          🔗 [查看 Actions](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
 
           # 查找并发送 AnyKernel3 包
           ZIP_FILE=$(ls release_zips/AnyKernel3_*.zip 2>/dev/null | head -1)
@@ -144,17 +144,38 @@ if release_start != -1:
 
 # 检查是否已有 Telegram 通知
 if '发送 Telegram 通知' not in content:
-    # 在 KSU_TYPENAME 设置后添加 Telegram 步骤
-    insert_marker = 'echo "KSU_TYPENAME=$KSU_TYPENAME" >> $GITHUB_ENV'
-    insert_pos = content.find(insert_marker)
-    if insert_pos != -1:
-        # 找到这行结束的位置
-        line_end = content.find('\n', insert_pos)
-        if line_end != -1:
-            content = content[:line_end+1] + telegram_step + content[line_end+1:]
-            print("已添加 Telegram 通知步骤")
+    # 查找 release job 中 "设置环境变量" 步骤的结束位置
+    # 需要找到该步骤 run: 块的结束，然后在其后添加新步骤
+    
+    # 方法：找到 "设置环境变量" 步骤，然后找到下一个步骤或 job 结束
+    env_step_marker = '- name: 设置环境变量'
+    env_step_pos = content.find(env_step_marker)
+    
+    if env_step_pos != -1:
+        # 从 "设置环境变量" 步骤开始，找到下一个 "- name:" 或文件结束
+        # 先找到这个步骤的 run: 块
+        run_start = content.find('run: |', env_step_pos)
+        if run_start != -1:
+            # 找到 run: 块后，查找下一个顶级步骤 (以 "      - name:" 开头)
+            # 或者查找下一个 job (以换行后紧跟非空格字符)
+            search_start = run_start + 10  # 跳过 "run: |" 和一些内容
+            
+            # 查找下一个步骤标记
+            next_step = content.find('\n      - name:', search_start)
+            
+            if next_step != -1:
+                # 在下一个步骤之前插入 Telegram 通知
+                content = content[:next_step] + '\n' + telegram_step + content[next_step:]
+                print("已添加 Telegram 通知步骤 (在下一步骤之前)")
+            else:
+                # 没有下一个步骤，在文件末尾添加
+                # 确保前一个步骤的 run: 块正确结束，添加适当的换行
+                content = content.rstrip() + '\n\n' + telegram_step.lstrip('\n') + '\n'
+                print("已添加 Telegram 通知步骤 (在文件末尾)")
+        else:
+            print("警告: 未找到 run: 块，Telegram 通知未添加")
     else:
-        print("警告: 未找到插入点，Telegram 通知未添加")
+        print("警告: 未找到 '设置环境变量' 步骤，Telegram 通知未添加")
 else:
     print("Telegram 通知已存在，跳过添加")
 
