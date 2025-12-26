@@ -762,6 +762,7 @@ jobs:
             KSU_TYPENAME="KernelSU (Official)"
           fi
           echo "KSU_TYPENAME=$KSU_TYPENAME" >> $GITHUB_ENV
+
       # ==================== Telegram 通知 ====================
       - name: 发送 Telegram 通知
         if: success()
