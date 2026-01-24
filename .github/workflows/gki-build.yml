@@ -394,8 +394,8 @@ jobs:
           case "${{ inputs.ksu_type }}" in
             sukisu)
               echo "配置 SukiSU Ultra..."
-              # 使用 tmp-builtin 稳定分支
-              curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s tmp-builtin
+              # 使用 builtin 分支 (上游已将 tmp-builtin 合并到 builtin)
+              curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/refs/heads/main/kernel/setup.sh" | bash -s builtin
               cd KernelSU
               
               # 获取当前 Git 提交的短哈希 (8位)
@@ -404,7 +404,7 @@ jobs:
               
               # 尝试最多 3 次获取 KernelSU API 版本号 (从 Kbuild 获取)
               for i in {1..3}; do
-                KSU_API=$(curl -s "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/tmp-builtin/kernel/Kbuild" | \
+                KSU_API=$(curl -s "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/builtin/kernel/Kbuild" | \
                   grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]')
                 [ -n "$KSU_API" ] && break || sleep 1
               done

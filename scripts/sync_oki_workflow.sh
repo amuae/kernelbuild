@@ -86,8 +86,10 @@ telegram_step = '''
           fi
           
           # KPM 状态文本
-          if [[ "${{ github.event.inputs.kpm_enable }}" == "true" ]]; then
-            KPM_STATUS="✅ 启用"
+          if [[ "${{ github.event.inputs.kpm_enable }}" == "builtin" ]]; then
+            KPM_STATUS="✅ 内置 KPM"
+          elif [[ "${{ github.event.inputs.kpm_enable }}" == "kpn" ]]; then
+            KPM_STATUS="✅ KPN"
           else
             KPM_STATUS="❌ 禁用"
           fi
